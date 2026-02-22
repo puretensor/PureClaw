@@ -32,7 +32,7 @@ class PureClawEmailResponderObserver(Observer):
     name = "pureclaw_email_responder"
     schedule = "*/5 * * * *"
 
-    GMAIL_SCRIPT = Path.home() / ".config" / "puretensor" / "gmail.py"
+    GMAIL_SCRIPT = Path(__file__).parent.parent / "tools" / "gmail.py"
     STATE_FILE = Path(__file__).parent / ".state" / "pureclaw_email_responder.json"
 
     # ── SECURITY: SENDER ALLOWLIST ──────────────────────────────
