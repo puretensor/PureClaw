@@ -42,7 +42,7 @@ class MorningBriefObserver(Observer):
     MAX_PER_ACCOUNT = 20
     PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", _PROMETHEUS_URL)
     WEATHER_LOCATION = os.environ.get("WEATHER_LOCATION", "London")
-    GCALENDAR_SCRIPT = Path.home() / ".config" / "puretensor" / "gcalendar.py"
+    GCALENDAR_SCRIPT = Path(__file__).parent.parent / "tools" / "gcalendar.py"
     CALENDAR_ACCOUNTS = ["personal", "ops"]
 
     # -- Data sources ----------------------------------------------------------
