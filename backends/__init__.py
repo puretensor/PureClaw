@@ -25,6 +25,7 @@ def get_backend():
         "anthropic_api": ("backends.anthropic_api", "AnthropicAPIBackend"),
         "codex_cli": ("backends.codex_cli", "CodexCLIBackend"),
         "gemini_cli": ("backends.gemini_cli", "GeminiCLIBackend"),
+        "vllm": ("backends.vllm", "VLLMBackend"),
     }
 
     if ENGINE_BACKEND not in _REGISTRY:
