@@ -3,7 +3,9 @@
 Mirrors anthropic_api.py structure with OpenAI message format:
   - System prompt prepended per-request (not stored in history)
   - Tool calls in OpenAI format (tool_calls / role=tool)
-  - <think>...</think> blocks stripped from MiniMax M2.5 responses
+  - <think>...</think> blocks preserved in assistant_msg during the tool loop
+    (MiniMax M2.5 requires interleaved thinking between tool rounds)
+  - <think> stripped only for user-facing text and persistent DB history
   - Conversation history persisted in DB (session memory across turns)
 """
 
@@ -32,6 +34,7 @@ def _clean_for_history(messages: list) -> list:
     Tool role messages and assistant messages with tool_calls cannot be safely
     trimmed by save_conversation_history (slicing mid-sequence causes vLLM 400s).
     The model only needs the final text turns to maintain conversational context.
+    <think> blocks are stripped here since they are intra-turn scaffolding only.
     """
     result = []
     for msg in messages:
@@ -39,7 +42,7 @@ def _clean_for_history(messages: list) -> list:
         if role == "user" and isinstance(msg.get("content"), str):
             result.append({"role": "user", "content": msg["content"]})
         elif role == "assistant" and not msg.get("tool_calls"):
-            text = msg.get("content") or ""
+            text = _THINK_RE.sub("", msg.get("content") or "").strip()
             if text:
                 result.append({"role": "assistant", "content": text})
     return result
@@ -100,8 +103,13 @@ class VLLMBackend:
     def _parse_response(resp) -> tuple[str, list[ToolCall], dict]:
         msg = resp.choices[0].message
 
-        # Strip thinking tokens
-        text = _THINK_RE.sub("", msg.content or "").strip()
+        # Preserve raw content (including <think>) for assistant_msg.
+        # MiniMax M2.5 requires interleaved thinking to maintain state between
+        # tool-call rounds — stripping it before the next round degrades accuracy.
+        raw_content = msg.content or ""
+
+        # Strip thinking tokens for user-facing display only.
+        text = _THINK_RE.sub("", raw_content).strip()
 
         tool_calls: list[ToolCall] = []
         tc_dicts: list[dict] = []
@@ -122,7 +130,9 @@ class VLLMBackend:
                     },
                 })
 
-        assistant_msg: dict = {"role": "assistant", "content": text}
+        # Use raw_content in the message appended to the tool loop so the model
+        # sees its own reasoning in subsequent rounds.
+        assistant_msg: dict = {"role": "assistant", "content": raw_content}
         if tc_dicts:
             assistant_msg["tool_calls"] = tc_dicts
 
@@ -164,6 +174,9 @@ class VLLMBackend:
                 messages=api_msgs,
                 tools=self._tools,
                 max_tokens=self._max_tokens,
+                temperature=1.0,
+                top_p=0.95,
+                extra_body={"top_k": 40},
                 timeout=min(timeout, self._total_timeout),
             )
 
@@ -227,6 +240,9 @@ class VLLMBackend:
                 messages=api_msgs,
                 tools=self._tools,
                 max_tokens=self._max_tokens,
+                temperature=1.0,
+                top_p=0.95,
+                extra_body={"top_k": 40},
                 timeout=self._total_timeout,
             )
 
