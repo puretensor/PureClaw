@@ -23,20 +23,20 @@ data:
   OBSERVER_STATE_DIR: "/data/state/observers"
   DARWIN_SNAPSHOT_PATH: "/data/state/darwin_state.json"
 
-  # TC services (via Tailscale)
-  TC_SSH_HOST: "TC_TAILSCALE_IP"
-  WHISPER_URL: "http://TC_TAILSCALE_IP:9000/transcribe"
-  TTS_URL: "http://TC_TAILSCALE_IP:5580/tts"
-  OLLAMA_URL: "http://TC_TAILSCALE_IP:11434"
-  OLLAMA_MODEL: "huihui_ai/qwen3-abliterated:235b"
+  # TC services (via Tailscale) — replace with your node IPs
+  TC_SSH_HOST: "YOUR_TC_TAILSCALE_IP"
+  WHISPER_URL: "http://YOUR_TC_TAILSCALE_IP:9000/transcribe"
+  TTS_URL: "http://YOUR_TC_TAILSCALE_IP:5580/tts"
+  OLLAMA_URL: "http://YOUR_TC_TAILSCALE_IP:11434"
+  OLLAMA_MODEL: "REPLACE_ME"
 
-  # Monitoring
-  PROMETHEUS_URL: "http://MON2_TAILSCALE_IP:9090"
-  ALERTMANAGER_URL: "http://MON2_TAILSCALE_IP:9093"
+  # Monitoring — replace with your monitoring node IPs
+  PROMETHEUS_URL: "http://YOUR_MON2_TAILSCALE_IP:9090"
+  ALERTMANAGER_URL: "http://YOUR_MON2_TAILSCALE_IP:9093"
 
-  # Infrastructure
-  GITEA_URL: "http://MON1_TAILSCALE_IP:3002"
-  SEARXNG_URL: "http://GCP_MEDIUM_TAILSCALE_IP:8080/search"
+  # Infrastructure — replace with your service IPs
+  GITEA_URL: "http://YOUR_MON1_TAILSCALE_IP:3002"
+  SEARXNG_URL: "http://YOUR_GCP_TAILSCALE_IP:8080/search"
 
   # Agent identity
   AGENT_NAME: "HAL"

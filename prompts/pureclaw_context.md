@@ -1,18 +1,18 @@
 # NEXUS Quick Reference
 
 ## User
-REDACTED_NAME — runs PureTensor AI infrastructure from London.
+The operator runs PureTensor AI infrastructure.
 
 ## Infrastructure
 - **tensor-core**: Threadripper PRO 9975WX, 2x RTX 6000 Pro Blackwell, 512 GB DDR5. Runs Ollama, Claude Code, NEXUS.
 - **FOX0**: Threadripper PRO 7975WX, 256 GB DDR5. Docker/Ollama burst compute.
 - **FOX1**: 512 GB DDR4, K3s worker (Nextcloud, Vaultwarden, Paperless, MinIO, OpenSearch, N8n).
 - **ARX1-4**: Proxmox/Ceph cluster (4 nodes, erasure-coded storage).
-- **mon1** (MON1_TAILSCALE_IP): Gitea, Uptime Kuma, WhatsApp translator, Bretalon report bot.
-- **mon2** (MON2_TAILSCALE_IP): Grafana, Prometheus, Loki, Alertmanager.
-- **mon3** (MON3_TAILSCALE_IP): Raspberry Pi 5, node exporter.
-- **e2-micro** (GCP): 13 static sites, nginx.
-- **gcp-medium** (GCP): bretalon.com, nesdia.com, cerebral.chat (WordPress).
+- **mon1** (<TAILSCALE_IP>): Gitea, Uptime Kuma, WhatsApp translator, Bretalon report bot.
+- **mon2** (<TAILSCALE_IP>): Grafana, Prometheus, Loki, Alertmanager.
+- **mon3** (<TAILSCALE_IP>): Raspberry Pi 5, node exporter.
+- **e2-micro** (GCP): static sites, nginx.
+- **gcp-medium** (GCP): WordPress sites.
 
 ## Tools You Have Access To
 
@@ -21,7 +21,7 @@ REDACTED_NAME — runs PureTensor AI infrastructure from London.
 cd ~/.config/puretensor
 python3 gmail.py <account> <command>
 ```
-- **Accounts:** `hal` (hal@puretensor.ai), `heimir` (ops@puretensor.ai as Heimir), `personal` (REDACTED_PERSONAL_EMAIL), `ops` (ops@puretensor.ai), `galactic` (REDACTED_GALACTIC_EMAIL)
+- **Accounts:** `hal` (hal@puretensor.ai), `ops` (ops@puretensor.ai) — configure additional accounts in your deployment
 - **Commands:** `inbox`, `unread`, `search`, `read`, `send`, `reply`, `trash`, `delete`, `spam`, `labels`, `filter-create`, `filter-list`, `filter-delete`
 - **Send:** `python3 gmail.py hal send --to X --subject "Y" --body "Z"` (sends as {agent_name} <hal@puretensor.ai>)
 - **Reply:** `python3 gmail.py hal reply --id MSG_ID --body "response"` (auto-threads)
@@ -31,7 +31,7 @@ python3 gmail.py <account> <command>
 ```bash
 python3 privateemail.py <account> <command>
 ```
-- **Accounts:** `hh` (REDACTED_HH_EMAIL), `alan` (REDACTED_ALAN_EMAIL), `yahoo` (REDACTED_YAHOO_EMAIL)
+- **Accounts:** configure in `privateemail.conf` — see privateemail.py for setup
 - **Commands:** `inbox`, `unread`, `search`, `read`, `trash`, `delete`, `folders`
 
 ### Calendar

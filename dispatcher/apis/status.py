@@ -3,27 +3,19 @@
 import os
 from dispatcher.apis import get_session, ttl_cache, DispatchError
 
-PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://MON2_TAILSCALE_IP:9090")
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://YOUR_PROMETHEUS_IP:9090")
 
 # Display-friendly names for Prometheus instance labels
+# Format: "LAN_IP:9100": "node-name"
+# Populate with your node IPs — set PROMETHEUS_URL env var for your deployment
 NODE_NAMES = {
-    "ARX1_LAN_IP:9100": "tensor-core",
-    "192.168.4.160:9100": "arx1",
-    "192.168.4.161:9100": "arx2",
-    "ARX4_LAN_IP:9100": "arx3",
-    "192.168.4.163:9100": "arx4",
-    "192.168.4.170:9100": "fox-n0",
-    "192.168.4.171:9100": "fox-n1",
-    "MON1_LAN_IP:9100": "mon1",
-    "MON2_LAN_IP:9100": "mon2",
-    "192.168.4.185:9100": "mon3",
+    # "192.168.x.x:9100": "tensor-core",
+    # "192.168.x.x:9100": "node1",
+    # Add your nodes here
 }
 
-# Preferred display order
-NODE_ORDER = [
-    "tensor-core", "arx1", "arx2", "arx3", "arx4",
-    "fox-n0", "fox-n1", "mon1", "mon2", "mon3",
-]
+# Preferred display order — list node names in the order you want them shown
+NODE_ORDER: list[str] = []
 
 
 @ttl_cache(seconds=15)
