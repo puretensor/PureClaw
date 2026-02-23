@@ -48,15 +48,15 @@ logging.basicConfig(
 log = logging.getLogger("nexus-failover")
 
 # Config
-TC_OLLAMA_URL = os.environ.get("TC_OLLAMA_URL", "http://TC_TAILSCALE_IP:11434")
-GCP_HOST = os.environ.get("GCP_SSH_HOST", "puretensorai@GCP_TAILSCALE_IP")
+TC_OLLAMA_URL = os.environ.get("TC_OLLAMA_URL", "")
+GCP_HOST = os.environ.get("GCP_SSH_HOST", "")
 STATE_DIR = Path(os.environ.get("OBSERVER_STATE_DIR", str(SCRIPT_DIR / "state")))
 CYBER_WEBROOT = "/var/www/cyber.puretensor.ai"
 INTEL_WEBROOT = "/var/www/intel.puretensor.ai"
 
 # Telegram alert bot
 ALERT_BOT_TOKEN = os.environ.get("ALERT_BOT_TOKEN", "")
-ALERT_CHAT_ID = os.environ.get("AUTHORIZED_USER_ID", "REDACTED_TELEGRAM_ID")
+ALERT_CHAT_ID = os.environ.get("AUTHORIZED_USER_ID", "")
 
 
 def send_telegram(text: str) -> None:

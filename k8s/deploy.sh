@@ -14,7 +14,7 @@
 set -euo pipefail
 
 NEXUS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-FOX_N1="root@FOX_N1_TAILSCALE_IP"
+FOX_N1="root@YOUR_FOX_N1_IP"
 BUILD_DIR="/tmp/nexus-build"
 VERSION="v1.0.0"
 
@@ -205,4 +205,4 @@ echo "Next steps:"
 echo "  1. Check logs: ssh fox-n1 'kubectl logs -n nexus deploy/nexus --tail=50'"
 echo "  2. Test via Telegram: send 'status' to @puretensor_claude_bot"
 echo "  3. Stop TC nexus: sudo systemctl stop nexus && sudo systemctl disable nexus"
-echo "  4. Update Gitea webhook to http://FOX_N1_TAILSCALE_IP:30876/"
+echo "  4. Update Gitea webhook to http://YOUR_FOX_N1_IP:30876/"

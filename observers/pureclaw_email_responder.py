@@ -39,13 +39,9 @@ class PureClawEmailResponderObserver(Observer):
     # ONLY these addresses may have their email content processed
     # by an LLM. All others are quarantined with a Telegram alert.
     # To add senders: edit this set, commit, restart nexus.
-    ALLOWED_SENDERS = {
-        "REDACTED_ALAN_GMAIL",
-        "REDACTED_ALAN_EMAIL",
-        "REDACTED_HH_EMAIL",
-        "REDACTED_PERSONAL_EMAIL",
-        "REDACTED_HOTMAIL_EMAIL",
-    }
+    # Configure trusted sender addresses for your deployment.
+    # Only these addresses may have their email content processed by an LLM.
+    ALLOWED_SENDERS: set[str] = set()
 
     # ── State management ────────────────────────────────────────
 
