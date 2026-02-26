@@ -389,9 +389,14 @@ class IntelManualPublisher:
             })
 
         # 4. Update varangian.ai landing feed (ticker)
-        if all_published:
+        # Only pass varangian entries — each entry has a single brand URL, so passing
+        # all_published would also insert the puretensor URL into the varangian.ai feed.
+        varangian_published = [
+            p for p in all_published if any("varangian" in u for u in p["urls"])
+        ]
+        if varangian_published:
             try:
-                self._observer._update_landing_feed(all_published)
+                self._observer._update_landing_feed(varangian_published)
             except Exception as e:
                 log.warning("intel_manual_publish: landing feed update failed: %s", e)
 
