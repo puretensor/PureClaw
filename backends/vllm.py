@@ -197,7 +197,7 @@ class VLLMBackend:
     ) -> dict:
         session_id = session_id or str(uuid.uuid4())
 
-        now = datetime.now(timezone.utc).strftime("Current date: %A, %B %d, %Y. Current time: %H:%M UTC.")
+        now = datetime.now(timezone.utc).strftime("Today's date: %A, %B %d, %Y (UTC). For current time, use bash: date -u")
         system_str = "\n\n".join(p for p in [system_prompt, now, memory_context] if p) or None
 
         history = get_conversation_history(session_id)
@@ -263,7 +263,7 @@ class VLLMBackend:
     ) -> dict:
         session_id = session_id or str(uuid.uuid4())
 
-        now = datetime.now(timezone.utc).strftime("Current date: %A, %B %d, %Y. Current time: %H:%M UTC.")
+        now = datetime.now(timezone.utc).strftime("Today's date: %A, %B %d, %Y (UTC). For current time, use bash: date -u")
         system_str = (
             "\n\n".join(p for p in [system_prompt, now, memory_context, extra_system_prompt] if p) or None
         )

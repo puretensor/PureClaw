@@ -117,7 +117,7 @@ spec:
 
       containers:
         - name: nexus
-          image: nexus:v1.0.0
+          image: nexus:v2.0.0
           imagePullPolicy: Never
           ports:
             - containerPort: 9876
