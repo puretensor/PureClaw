@@ -936,6 +936,64 @@ def is_email_seen(message_id: str) -> bool:
 _MAX_HISTORY_MESSAGES = 60  # 30 exchanges — stays well within 200k context
 
 
+def _has_tool_result(msg: dict) -> bool:
+    """Check if a message contains tool_result content blocks."""
+    content = msg.get("content")
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content
+        )
+    return False
+
+
+def _has_tool_use(msg: dict) -> bool:
+    """Check if a message contains tool_use content blocks."""
+    content = msg.get("content")
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict) and b.get("type") == "tool_use"
+            for b in content
+        )
+    return False
+
+
+def _trim_history(messages: list[dict], max_messages: int) -> list[dict]:
+    """Trim conversation history without breaking tool_use/tool_result pairs.
+
+    The Anthropic API requires every tool_result to have a corresponding
+    tool_use in the immediately preceding assistant message. Naive slicing
+    can orphan tool_results, causing 400 errors.
+    """
+    if len(messages) <= max_messages:
+        return messages
+
+    trimmed = messages[-max_messages:]
+
+    # Walk forward from the start, skipping any orphaned tool_result messages
+    # and any assistant messages whose tool_use blocks lost their tool_results
+    while trimmed:
+        first = trimmed[0]
+        # If first message is a tool_result, it's orphaned — skip it
+        if _has_tool_result(first):
+            trimmed = trimmed[1:]
+            continue
+        # If first message is an assistant with tool_use, the next message
+        # must be a tool_result — if not, or if there's no next message,
+        # skip this assistant message too
+        if first.get("role") == "assistant" and _has_tool_use(first):
+            if len(trimmed) < 2 or not _has_tool_result(trimmed[1]):
+                trimmed = trimmed[1:]
+                continue
+        break
+
+    # History must start with a user message for the Anthropic API
+    while trimmed and trimmed[0].get("role") != "user":
+        trimmed = trimmed[1:]
+
+    return trimmed
+
+
 def get_conversation_history(session_id: str) -> list[dict]:
     """Return stored message list for a session (empty list if none)."""
     import json
@@ -956,8 +1014,7 @@ def get_conversation_history(session_id: str) -> list[dict]:
 def save_conversation_history(session_id: str, messages: list[dict]) -> None:
     """Persist conversation messages for a session, trimming to max length."""
     import json
-    if len(messages) > _MAX_HISTORY_MESSAGES:
-        messages = messages[-_MAX_HISTORY_MESSAGES:]
+    messages = _trim_history(messages, _MAX_HISTORY_MESSAGES)
     now = _now()
     con = _connect()
     con.execute(
