@@ -19,6 +19,58 @@ from backends.tools import TOOL_SCHEMAS, ToolCall, run_tool_loop_sync, run_tool_
 
 log = logging.getLogger("nexus")
 
+
+def _sanitize_history(messages: list[dict]) -> list[dict]:
+    """Remove orphaned tool_result blocks from conversation history.
+
+    The Anthropic API requires every tool_result to reference a tool_use_id
+    from the immediately preceding assistant message. History corruption
+    (restarts, trimming, session merges) can orphan tool_results, causing
+    400 errors. This pre-flight check strips them.
+    """
+    if not messages:
+        return messages
+
+    cleaned = []
+    for i, msg in enumerate(messages):
+        content = msg.get("content")
+
+        # Check if this message contains tool_result blocks
+        if isinstance(content, list) and any(
+            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+        ):
+            # Find valid tool_use_ids from the preceding assistant message
+            valid_ids = set()
+            if cleaned:
+                prev = cleaned[-1]
+                prev_content = prev.get("content")
+                if prev.get("role") == "assistant" and isinstance(prev_content, list):
+                    for b in prev_content:
+                        if isinstance(b, dict) and b.get("type") == "tool_use":
+                            valid_ids.add(b.get("id"))
+
+            # Filter to only tool_results with valid references
+            kept_blocks = []
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    if b.get("tool_use_id") in valid_ids:
+                        kept_blocks.append(b)
+                    else:
+                        log.warning(
+                            "Stripped orphaned tool_result (id=%s) from history",
+                            b.get("tool_use_id", "?")[:20],
+                        )
+                else:
+                    kept_blocks.append(b)
+
+            if kept_blocks:
+                cleaned.append({**msg, "content": kept_blocks})
+            # else: entire message was orphaned tool_results — drop it
+        else:
+            cleaned.append(msg)
+
+    return cleaned
+
 # Reusable cache directive
 _CACHE_EPHEMERAL = {"type": "ephemeral"}
 
@@ -238,7 +290,7 @@ class AnthropicAPIBackend:
         model_id = self._resolve_model(model)
         system = _build_system_blocks(system_prompt, memory_context)
 
-        history = get_conversation_history(session_id)
+        history = _sanitize_history(get_conversation_history(session_id))
         messages = history + [{"role": "user", "content": prompt}]
 
         def send_request(msgs):
@@ -309,7 +361,7 @@ class AnthropicAPIBackend:
         model_id = self._resolve_model(model)
         system = _build_system_blocks(system_prompt, memory_context, extra_system_prompt)
 
-        history = get_conversation_history(session_id)
+        history = _sanitize_history(get_conversation_history(session_id))
         messages = history + [{"role": "user", "content": message}]
 
         async def send_request(msgs):
