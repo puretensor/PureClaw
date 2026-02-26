@@ -143,10 +143,14 @@ class AnthropicAPIBackend:
         return False
 
     def _resolve_model(self, model: str) -> str:
-        # Map shorthand to configured default
-        if model in ("sonnet", "opus", "haiku") or not model:
+        _MODEL_MAP = {
+            "sonnet": "claude-sonnet-4-6",
+            "opus": "claude-opus-4-6",
+            "haiku": "claude-haiku-4-5-20251001",
+        }
+        if not model:
             return self._default_model
-        return model
+        return _MODEL_MAP.get(model, model)
 
     def _require_client(self) -> tuple[Anthropic | None, str | None]:
         if not self._api_key:

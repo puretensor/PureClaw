@@ -14,9 +14,9 @@
 set -euo pipefail
 
 NEXUS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-FOX_N1="root@YOUR_FOX_N1_IP"
+FOX_N1="root@FOX_N1_TAILSCALE_IP"
 BUILD_DIR="/tmp/nexus-build"
-VERSION="v1.0.0"
+VERSION="v2.0.0"
 
 echo "=== Nexus K8s Deploy ==="
 echo "Source: $NEXUS_DIR"
@@ -113,9 +113,41 @@ else
   ssh "$FOX_N1" "kubectl -n nexus create secret generic oauth-tokens"
 fi
 
-# ConfigMap
+# ConfigMap (env vars)
 scp "$NEXUS_DIR/k8s/configmap.yaml" "$FOX_N1:/tmp/nexus-cm.yaml"
 ssh "$FOX_N1" "kubectl apply -f /tmp/nexus-cm.yaml"
+
+# Claude context ConfigMap (CLAUDE.md for Claude CLI fallback)
+ssh "$FOX_N1" "kubectl -n nexus delete configmap claude-context 2>/dev/null || true"
+if [ -f "$NEXUS_DIR/CLAUDE.md" ]; then
+  scp "$NEXUS_DIR/CLAUDE.md" "$FOX_N1:/tmp/nexus-claude-md"
+else
+  # Create minimal CLAUDE.md from system prompt
+  echo "# PureClaw Context" > /tmp/nexus-claude-md
+  cat "$NEXUS_DIR/prompts/pureclaw_context.md" >> /tmp/nexus-claude-md 2>/dev/null || true
+  scp /tmp/nexus-claude-md "$FOX_N1:/tmp/nexus-claude-md"
+  rm /tmp/nexus-claude-md
+fi
+ssh "$FOX_N1" "kubectl -n nexus create configmap claude-context \
+  --from-file=CLAUDE.md=/tmp/nexus-claude-md && rm /tmp/nexus-claude-md"
+
+# Claude memory ConfigMap (project memory for Claude CLI)
+ssh "$FOX_N1" "kubectl -n nexus delete configmap claude-memory 2>/dev/null || true"
+MEMORY_ARGS=""
+if [ -d "$NEXUS_DIR/prompts" ]; then
+  for f in "$NEXUS_DIR/prompts"/*.md; do
+    [ -f "$f" ] || continue
+    fname="$(basename "$f")"
+    scp "$f" "$FOX_N1:/tmp/nexus-mem-$fname"
+    MEMORY_ARGS="$MEMORY_ARGS --from-file=$fname=/tmp/nexus-mem-$fname"
+  done
+fi
+if [ -n "$MEMORY_ARGS" ]; then
+  ssh "$FOX_N1" "kubectl -n nexus create configmap claude-memory $MEMORY_ARGS"
+  ssh "$FOX_N1" "rm -f /tmp/nexus-mem-*.md"
+else
+  ssh "$FOX_N1" "kubectl -n nexus create configmap claude-memory"
+fi
 
 # PVCs
 scp "$NEXUS_DIR/k8s/pvcs.yaml" "$FOX_N1:/tmp/nexus-pvcs.yaml"

@@ -1,8 +1,8 @@
-# HAL-LOCAL Context
+# PureClaw Context
 
-*Runtime:* Qwen3-235B-A22B (NVFP4) on vLLM, tensor-core 2x RTX PRO 6000 Blackwell (192 GB VRAM).
-*Container:* LXC CT 205 on fox-n1, hostname `hal-local`, IP LXC_LAN_IP / Tailscale LXC_TAILSCALE_IP.
-*Code:* /opt/nexus/ | *DB:* /data/nexus.db | *CWD:* /root
+*Runtime:* Claude Sonnet 4.6 via Anthropic API (model switching: /opus, /sonnet, /haiku).
+*Deployment:* K3s pod on fox-n1 (namespace: nexus, image: nexus:v2.0.0).
+*Code:* /app | *DB:* /data/nexus.db | *CWD:* /app
 
 ## Fleet — Naming & SSH
 
@@ -13,7 +13,7 @@ All nodes reachable by hostname via SSH config. Use `ssh <hostname> '<command>'`
 
 *Tier 1 — Engine Room*
 • fox-n0 — AMD TR 7970X 32C, 256 GB DDR5, 14 TB NVMe. Burst compute (Docker/Ollama). Often powered off. User: `root`.
-• fox-n1 — AMD EPYC 7443 24C, 503 GB DDR4, 8 TB ZFS. K3s worker. Hosts this container. User: `root`.
+• fox-n1 — AMD EPYC 7443 24C, 503 GB DDR4, 8 TB ZFS. K3s host. Runs this pod. User: `root`.
 
 *Tier 2 — Ceph Cluster (Supermicro 1U, Xeon E3-1270 v6, 32 GB DDR4)*
 • arx1, arx2, arx3, arx4 — Ceph v19.2.3 Squid, 16 OSDs, 170 TiB raw (~4% used). User: `root`.
@@ -99,9 +99,10 @@ Common queries:
 
 | Service | Node | Management |
 |---------|------|------------|
-| vLLM (Qwen3-235B) | tensor-core | `ssh tensor-core 'sudo systemctl restart vllm'` |
+| PureClaw (this) | fox-n1 K3s | `ssh fox-n1 'kubectl rollout restart deployment/nexus -n nexus'` |
+| vLLM (Qwen3.5-35B) | tensor-core | `ssh tensor-core 'sudo systemctl restart vllm'` |
 | Whisper STT | tensor-core | http://TC_TAILSCALE_IP:9000/transcribe |
-| XTTS TTS | tensor-core | http://TC_TAILSCALE_IP:5580/tts |
+| TTS | tensor-core | http://TC_TAILSCALE_IP:5580/tts |
 | Ceph cluster | arx1-4 | `ssh arx1 'ceph status'` |
 | K3s | fox-n1 | `ssh fox-n1 'kubectl get pods -A'` |
 | Gitea | mon1 | http://MON1_TAILSCALE_IP:3002 |
@@ -122,7 +123,7 @@ ssh tensor-core '~/power/psleep-tier <0-4>'   # tier off
 
 - Company: *PureTensor* (one word, capitalised). Full: PureTensor Inc.
 - Nodes: lowercase with hyphens (tensor-core, fox-n0, arx1, hal-0, mon1).
-- Agent identity: HAL = Heuristic Acquisition Layer. You are HAL-LOCAL.
+- Agent identity: HAL = Heterarchical Agentic Layer, powered by Claude.
 - Infrastructure codenames: ARK (storage), NEXUS (agent dispatcher).
 
 ## Operator Preferences
