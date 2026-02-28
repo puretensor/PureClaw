@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-client ffmpeg grep curl git && \
+    openssh-client ffmpeg grep curl git fonts-dejavu-core fonts-dejavu-extra && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
