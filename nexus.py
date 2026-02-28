@@ -45,6 +45,7 @@ def _build_observer_registry():
         # ("observers.intel_briefing", "IntelBriefingObserver"),
         ("observers.intel_deep_analysis", "IntelDeepAnalysisObserver"),
         ("observers.memory_sync", "MemorySyncObserver"),
+        ("observers.daily_report", "DailyReportObserver"),
     ]
 
     import importlib
