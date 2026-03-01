@@ -1012,7 +1012,7 @@ on <strong>{pub_date_only}</strong>. I'd appreciate your sign-off before it goes
                     "python3", gmail_script, "hal", "send",
                     "--to", recipient,
                     "--subject", subject,
-                    "--body", f"@{tmp_path}",
+                    "--body-file", tmp_path,
                     "--html",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
