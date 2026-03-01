@@ -3,11 +3,15 @@
 import asyncio
 import json
 import logging
+import os
 import subprocess
 
 from config import CLAUDE_BIN, CLAUDE_CWD, TIMEOUT
 
 log = logging.getLogger("nexus")
+
+# Strip ANTHROPIC_API_KEY so CLI uses OAuth credentials from ~/.claude/.credentials.json
+_CLI_ENV = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
 
 
 class ClaudeCodeBackend:
@@ -65,7 +69,7 @@ class ClaudeCodeBackend:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, cwd=CLAUDE_CWD
+                cmd, capture_output=True, text=True, timeout=timeout, cwd=CLAUDE_CWD, env=_CLI_ENV
             )
         except subprocess.TimeoutExpired:
             return {"result": f"Claude timed out after {timeout}s", "session_id": None}
@@ -131,6 +135,7 @@ class ClaudeCodeBackend:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=CLAUDE_CWD,
+            env=_CLI_ENV,
             limit=10 * 1024 * 1024,  # 10MB buffer for large stream-json lines
         )
 

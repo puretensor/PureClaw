@@ -273,14 +273,22 @@ class EmailInputChannel(Channel):
             log.warning("Email input: failed to send notification: %s", e)
 
     async def _create_auto_reply(self, em: dict):
-        """Use Claude to draft a reply, then queue it for approval."""
+        """Use Claude to compose and send a reply autonomously.
+
+        HAL uses his own judgement for whitelisted senders — no approval needed.
+        Telegram gets an informational notification after sending.
+        """
+        import subprocess
         from engine import call_sync
+        from drafts.queue import GMAIL_SCRIPT, GMAIL_IDENTITY
 
         body_preview = em["body"][:2000] if em.get("body") else "(no body)"
         prompt = (
-            f"You are {AGENT_NAME}, an AI assistant. Draft a professional reply to this email.\n"
-            "Keep it concise, helpful, and match the tone of the original.\n"
-            "Output ONLY the reply text — no subject line, no 'Dear...', just the content.\n\n"
+            f"You are {AGENT_NAME}, an AI agent for PureTensor infrastructure. "
+            "You are replying to an email from a trusted colleague. "
+            "Be concise, professional, and helpful. Use your judgement. "
+            "Sign off as HAL. "
+            "Output ONLY the reply text — no subject line, no greeting header, just the content.\n\n"
             f"From: {em['from']}\n"
             f"Subject: {em['subject']}\n\n"
             f"{body_preview}"
@@ -289,22 +297,55 @@ class EmailInputChannel(Channel):
         try:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: call_sync(prompt))
-            draft_body = result.get("result", "")
+            reply_body = result.get("result", "")
         except Exception as e:
             log.warning("Email input: Claude draft failed for %s: %s", em["from"], e)
-            # Fall back to notification
             await self._send_notification(em)
             return
 
-        if not draft_body:
+        if not reply_body:
             await self._send_notification(em)
             return
 
-        # Create draft with Telegram approval buttons
-        await create_email_draft(
-            email_from=em["from_addr"] or em["from"],
-            email_subject=em["subject"],
-            email_message_id=em["id"],
-            draft_body=draft_body,
-            bot=self._bot,
-        )
+        # Send immediately — no approval gate
+        try:
+            reply_to = em["from_addr"] or em["from"]
+            reply_subject = em["subject"]
+            if not reply_subject.lower().startswith("re:"):
+                reply_subject = f"Re: {reply_subject}"
+            send_result = await loop.run_in_executor(None, lambda: subprocess.run(
+                [
+                    "python3", str(GMAIL_SCRIPT),
+                    GMAIL_IDENTITY, "reply",
+                    "--to", reply_to,
+                    "--subject", reply_subject,
+                    "--id", em["id"],
+                    "--body", reply_body,
+                ],
+                capture_output=True, text=True, timeout=30,
+            ))
+
+            if send_result.returncode == 0:
+                log.info("Auto-replied to %s re: %s", em["from_addr"], em["subject"])
+
+                # Notify Telegram (informational only)
+                if self._bot:
+                    preview = reply_body[:300] + "..." if len(reply_body) > 300 else reply_body
+                    text = (
+                        f"[SENT] Auto-reply to {em['from']}\n"
+                        f"Re: {em['subject']}\n\n"
+                        f"{preview}"
+                    )
+                    try:
+                        await self._bot.send_message(
+                            chat_id=int(AUTHORIZED_USER_ID), text=text,
+                        )
+                    except Exception:
+                        pass
+            else:
+                error = send_result.stderr[:200] or send_result.stdout[:200]
+                log.warning("Auto-reply send failed for %s: %s", em["from_addr"], error)
+                await self._send_notification(em)
+        except Exception as e:
+            log.warning("Auto-reply error for %s: %s", em["from_addr"], e)
+            await self._send_notification(em)

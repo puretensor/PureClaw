@@ -70,10 +70,8 @@ spec:
             - sh
             - -c
             - |
-              # Credentials — only if not already present (token may have refreshed)
-              if [ ! -f /claude-home/.credentials.json ]; then
-                cp /claude-creds/.credentials.json /claude-home/ 2>/dev/null || true
-              fi
+              # Always refresh credentials from secret (token may have been rotated)
+              cp /claude-creds/.credentials.json /claude-home/ 2>/dev/null || true
               # Settings always reset to default (non-persistent)
               echo '{}' > /claude-home/remote-settings.json
               echo '{}' > /claude-home/settings.json
@@ -130,10 +128,10 @@ spec:
                 name: nexus-config
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "100m"
+              memory: "512Mi"
+              cpu: "200m"
             limits:
-              memory: "1Gi"
+              memory: "4Gi"
               cpu: "2000m"
           livenessProbe:
             httpGet:
