@@ -251,7 +251,7 @@ class TestEmailInputChannel:
             "from_addr": "REDACTED_ALAN_EMAIL",
             "subject": "Report feedback",
             "date": "Feb 10 09:00",
-            "to": "hal@puretensor.ai",
+            "to": "hal@puretensors.com",
             "body": "Hi PureClaw, the latest report was excellent. Can you update the analysis?",
         }
 

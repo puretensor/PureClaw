@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import imaplib
 import smtplib
 import subprocess
 import tempfile
@@ -891,7 +892,7 @@ class BretalonAutoPublishObserver(Observer):
 
     def _send_review_email(self, article: dict, post_info: dict,
                            council: CouncilResult) -> bool:
-        """Send review emails via gmail.py (hal@puretensor.ai).
+        """Send review emails via gmail.py (hal@puretensors.com, Krakumail SMTP).
 
         Alan gets a clean editorial email — no AI/tech mentions, reads like a
         human subordinate submitted the piece for approval.
@@ -1011,7 +1012,7 @@ on <strong>{pub_date_only}</strong>. I'd appreciate your sign-off before it goes
 </p>
 
 <p style="margin-top: 2em;">— HAL<br>
-<span style="color:#999;font-size:11px;">Heterarchical Agentic Layer · hal@puretensor.ai</span></p>
+<span style="color:#999;font-size:11px;">Heterarchical Agentic Layer · hal@puretensors.com</span></p>
 </body>
 </html>"""
 
@@ -1247,6 +1248,405 @@ on <strong>{pub_date_only}</strong>. I'd appreciate your sign-off before it goes
                 "email_sent": email_sent,
             },
         )
+
+
+# ── Phase 2: Review Reply Handler ──────────────────────────────────────────
+
+
+class BretalonReplyObserver(Observer):
+    """Scans HAL inbox for replies to [BRETALON] review emails.
+
+    Actions:
+      APPROVED — log confirmation, no action needed (auto-publishes)
+      REJECTED — move WordPress post to draft, notify via Telegram
+      REVISE   — extract notes, re-write article, re-run council, update post
+    """
+
+    name = "bretalon_reply"
+    schedule = "*/15 * * * *"  # every 15 minutes
+
+    def __init__(self):
+        super().__init__()
+        self._state_dir = Path(
+            os.environ.get("OBSERVER_STATE_DIR",
+                           str(Path(__file__).parent / ".state"))
+        )
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def _reply_state_file(self) -> Path:
+        return self._state_dir / "bretalon_reply_processed.json"
+
+    @property
+    def _autopub_state_file(self) -> Path:
+        return self._state_dir / "bretalon_autopublish_state.json"
+
+    def _load_json(self, path: Path, default=None):
+        if path.exists():
+            try:
+                return json.loads(path.read_text())
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return default if default is not None else {}
+
+    def _save_json(self, path: Path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, default=str))
+
+    # Krakumail IMAP credentials for hal@puretensors.com
+    IMAP_HOST = "mail.krakumail.com"
+    IMAP_PORT = 993
+    IMAP_USER = "hal@puretensors.com"
+    IMAP_PASS = os.environ.get("HAL_IMAP_PASSWORD", "")
+
+    def _search_replies(self) -> list[dict]:
+        """Search HAL's Krakumail inbox for replies to BRETALON review emails."""
+        import email as email_mod
+        import email.header
+        import email.utils
+
+        try:
+            conn = imaplib.IMAP4_SSL(self.IMAP_HOST, self.IMAP_PORT)
+            conn.login(self.IMAP_USER, self.IMAP_PASS)
+        except Exception as e:
+            log.warning("bretalon_reply: IMAP connect failed: %s", e)
+            return []
+
+        try:
+            conn.select("INBOX")
+            # Search for unseen messages with [BRETALON] in subject
+            status, data = conn.search(None, '(UNSEEN SUBJECT "[BRETALON]")')
+            if status != "OK" or not data[0]:
+                return []
+
+            uids = data[0].split()[-10:]  # max 10 per cycle
+            replies = []
+
+            for uid in uids:
+                status, msg_data = conn.fetch(uid, "(BODY.PEEK[])")
+                if status != "OK" or not msg_data or msg_data[0] is None:
+                    continue
+
+                raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+                msg = email_mod.message_from_bytes(raw)
+
+                from_raw = self._decode_imap_header(msg.get("From", ""))
+                subject = self._decode_imap_header(msg.get("Subject", ""))
+                date_str = msg.get("Date", "")
+                msg_id = msg.get("Message-ID", f"{uid.decode()}@krakumail")
+
+                # Skip our own sent messages
+                from_addr = email.utils.parseaddr(from_raw)[1]
+                if from_addr == self.IMAP_USER:
+                    continue
+
+                body = self._extract_imap_body(msg)
+
+                replies.append({
+                    "imap_uid": uid.decode(),
+                    "message_id": msg_id.strip(),
+                    "from": from_raw,
+                    "subject": subject,
+                    "date": date_str,
+                    "body": body,
+                })
+
+            return replies
+
+        except Exception as e:
+            log.warning("bretalon_reply: IMAP search failed: %s", e)
+            return []
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _decode_imap_header(raw: str) -> str:
+        """Decode IMAP email header (handles encoded words)."""
+        import email.header
+        if not raw:
+            return ""
+        parts = email.header.decode_header(raw)
+        decoded = []
+        for data, charset in parts:
+            if isinstance(data, bytes):
+                decoded.append(data.decode(charset or "utf-8", errors="replace"))
+            else:
+                decoded.append(data)
+        return " ".join(decoded)
+
+    @staticmethod
+    def _extract_imap_body(msg) -> str:
+        """Extract plain text body from an IMAP email message."""
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        charset = part.get_content_charset() or "utf-8"
+                        return payload.decode(charset, errors="replace")
+            # Fallback to HTML stripped
+            for part in msg.walk():
+                if part.get_content_type() == "text/html":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        charset = part.get_content_charset() or "utf-8"
+                        text = payload.decode(charset, errors="replace")
+                        return re.sub(r"<[^>]+>", "", text)
+        else:
+            payload = msg.get_payload(decode=True)
+            if payload:
+                charset = msg.get_content_charset() or "utf-8"
+                return payload.decode(charset, errors="replace")
+        return ""
+
+    @staticmethod
+    def _classify_reply(body: str) -> tuple[str, str]:
+        """Parse reply body for APPROVED/REVISE/REJECTED.
+
+        Returns (action, notes) where action is one of:
+        'approved', 'rejected', 'revise', 'unknown'
+        """
+        # Strip quoted reply chains — only look at the actual reply text
+        lines = body.split("\n")
+        reply_lines = []
+        for line in lines:
+            # Stop at quoted text markers
+            if line.strip().startswith(">") or line.strip().startswith("On ") and "wrote:" in line:
+                break
+            reply_lines.append(line)
+
+        reply_text = "\n".join(reply_lines).strip()
+        reply_upper = reply_text.upper()
+
+        if "APPROVED" in reply_upper or "APPROVE" in reply_upper:
+            return "approved", ""
+        elif "REJECTED" in reply_upper or "REJECT" in reply_upper or "CANCEL" in reply_upper:
+            return "rejected", ""
+        elif "REVISE" in reply_upper or "REVISION" in reply_upper or "AMEND" in reply_upper:
+            # Everything after the keyword is revision notes
+            notes = reply_text
+            for keyword in ["REVISE", "REVISION", "AMEND", "revise", "revision", "amend"]:
+                if keyword in notes:
+                    idx = notes.index(keyword) + len(keyword)
+                    notes = notes[idx:].strip().lstrip(":").lstrip("-").strip()
+                    break
+            return "revise", notes if notes else reply_text
+
+        return "unknown", reply_text
+
+    def _get_pending_post(self) -> dict | None:
+        """Get the most recent pending post info from state."""
+        state = self._load_json(self._autopub_state_file)
+        post_id = state.get("last_post_id")
+        if not post_id:
+            return None
+        return {
+            "post_id": post_id,
+            "title": state.get("last_title", ""),
+            "topic": state.get("last_topic", ""),
+        }
+
+    def _cancel_post(self, post_id: str) -> bool:
+        """Move WordPress post to draft status."""
+        try:
+            result = subprocess.run(
+                ["ssh", SSH_HOST,
+                 f"sudo docker exec {WP_CONTAINER} wp post update {post_id} "
+                 f"--post_status=draft --allow-root"],
+                capture_output=True, text=True, timeout=30,
+            )
+            return "Success" in result.stdout
+        except Exception as e:
+            log.error("bretalon_reply: failed to cancel post %s: %s", post_id, e)
+            return False
+
+    def _archive_reply(self, imap_uid: str):
+        """Mark processed reply as read on Krakumail IMAP."""
+        try:
+            conn = imaplib.IMAP4_SSL(self.IMAP_HOST, self.IMAP_PORT)
+            conn.login(self.IMAP_USER, self.IMAP_PASS)
+            conn.select("INBOX")
+            conn.store(imap_uid.encode(), "+FLAGS", "\\Seen")
+            conn.logout()
+        except Exception as e:
+            log.warning("bretalon_reply: failed to mark reply %s as read: %s", imap_uid, e)
+
+    def run(self, ctx=None) -> ObserverResult:
+        """Check for and process review email replies."""
+        processed = set(self._load_json(self._reply_state_file, []))
+        replies = self._search_replies()
+
+        if not replies:
+            return ObserverResult(success=True)
+
+        pending = self._get_pending_post()
+        actions_taken = []
+
+        for reply in replies:
+            if reply["message_id"] in processed:
+                continue
+
+            action, notes = self._classify_reply(reply["body"])
+            sender = reply["from"]
+            log.info("bretalon_reply: %s from %s — action: %s",
+                     reply["subject"][:60], sender, action)
+
+            if action == "approved":
+                msg = (f"Article APPROVED by {sender}.\n"
+                       f"Will auto-publish at scheduled time.")
+                self.send_telegram(f"[bretalon_reply] {msg}")
+                actions_taken.append(f"approved by {sender}")
+
+            elif action == "rejected":
+                if pending:
+                    success = self._cancel_post(pending["post_id"])
+                    status = "moved to draft" if success else "FAILED to cancel"
+                    msg = (f"Article REJECTED by {sender}.\n"
+                           f"Post {pending['post_id']} ({pending['title']}) {status}.")
+                    self.send_telegram(f"[bretalon_reply] {msg}")
+                    actions_taken.append(f"rejected by {sender}, post {status}")
+                else:
+                    self.send_telegram(
+                        f"[bretalon_reply] REJECTED by {sender} but no pending post found")
+
+            elif action == "revise":
+                if pending:
+                    msg = (f"REVISION requested by {sender}.\n"
+                           f"Post: {pending['post_id']} ({pending['title']})\n"
+                           f"Notes: {notes[:300]}")
+                    self.send_telegram(f"[bretalon_reply] {msg}")
+
+                    # Trigger revision pipeline
+                    revised = self._handle_revision(pending, notes)
+                    if revised:
+                        actions_taken.append(f"revised per {sender}")
+                    else:
+                        actions_taken.append(f"revision failed for {sender}")
+                else:
+                    self.send_telegram(
+                        f"[bretalon_reply] REVISE from {sender} but no pending post found")
+
+            elif action == "unknown":
+                msg = (f"Unrecognised reply from {sender}:\n"
+                       f"{notes[:200]}\n\n"
+                       f"Expected: APPROVED, REVISE, or REJECTED")
+                self.send_telegram(f"[bretalon_reply] {msg}")
+                actions_taken.append(f"unknown reply from {sender}")
+
+            # Mark as processed and archive (mark read on IMAP)
+            processed.add(reply["message_id"])
+            self._archive_reply(reply["imap_uid"])
+
+        # Save processed IDs (keep last 200)
+        self._save_json(self._reply_state_file, sorted(processed)[-200:])
+
+        if actions_taken:
+            return ObserverResult(
+                success=True,
+                message=f"Processed {len(actions_taken)} replies: {'; '.join(actions_taken)}",
+            )
+        return ObserverResult(success=True)
+
+    def _handle_revision(self, pending: dict, notes: str) -> bool:
+        """Re-write article with revision notes, re-run council, update post."""
+        post_id = pending["post_id"]
+        topic = pending["topic"]
+        title = pending["title"]
+
+        log.info("bretalon_reply: starting revision for post %s (%s)", post_id, title)
+
+        # Fetch current article content from WordPress
+        try:
+            raw = subprocess.run(
+                ["ssh", SSH_HOST,
+                 f"sudo docker exec {WP_CONTAINER} wp post get {post_id} "
+                 f"--field=post_content --allow-root"],
+                capture_output=True, text=True, timeout=30,
+            ).stdout.strip()
+
+            # Strip HTML tags to get plain text for revision prompt
+            import html as html_mod
+            current_text = re.sub(r"<[^>]+>", "", raw)
+            current_text = html_mod.unescape(current_text)
+            current_text = re.sub(r"\n{3,}", "\n\n", current_text).strip()
+        except Exception as e:
+            log.error("bretalon_reply: failed to fetch post %s: %s", post_id, e)
+            return False
+
+        # Re-write with revision feedback
+        autopub = BretalonAutoPublishObserver()
+        article = autopub._write_article(
+            topic=topic,
+            research=current_text,  # use existing article as "research"
+            revision_feedback=(
+                f"EDITOR REVISION REQUEST:\n{notes}\n\n"
+                f"The original article title was: {title}\n"
+                f"Maintain the same topic and thesis. Address the editor's specific notes. "
+                f"Keep the same headline unless the notes specifically request a title change."
+            ),
+        )
+
+        if not article:
+            log.error("bretalon_reply: revision writing failed for post %s", post_id)
+            self.send_telegram(f"[bretalon_reply] Revision writing FAILED for post {post_id}")
+            return False
+
+        # Run council review on revised article
+        council = autopub._council_review(article)
+        log.info("bretalon_reply: revision council — %.1f/10 (%s)",
+                 council.average_score, council.verdict)
+
+        # Format and update WordPress post
+        gutenberg = autopub._format_gutenberg(article)
+
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".html",
+                                             delete=False, encoding="utf-8") as f:
+                f.write(gutenberg)
+                local_html = f.name
+
+            subprocess.run(
+                ["scp", local_html, f"{SSH_HOST}:/tmp/bretalon_revision.html"],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+
+            result = subprocess.run(
+                ["ssh", SSH_HOST,
+                 f"sudo docker cp /tmp/bretalon_revision.html "
+                 f"{WP_CONTAINER}:/tmp/bretalon_revision.html && "
+                 f"sudo docker exec {WP_CONTAINER} wp post update {post_id} "
+                 f"/tmp/bretalon_revision.html --allow-root"],
+                capture_output=True, text=True, timeout=30,
+            )
+
+            os.unlink(local_html)
+
+            if "Success" not in result.stdout:
+                log.error("bretalon_reply: wp update failed: %s", result.stdout)
+                return False
+
+        except Exception as e:
+            log.error("bretalon_reply: revision update failed: %s", e)
+            return False
+
+        # Send new review email
+        post_info = {"post_id": post_id, "publish_date": "unchanged"}
+        autopub._send_review_email(article, post_info, council)
+
+        # Telegram summary
+        msg = (f"Article REVISED and updated:\n"
+               f"  Post ID: {post_id}\n"
+               f"  Title: {article['title']}\n"
+               f"  Words: ~{article.get('word_count', 0):,}\n"
+               f"  Council: {council.average_score:.1f}/10 ({council.verdict})\n"
+               f"  New review email sent")
+        self.send_telegram(f"[bretalon_reply] {msg}")
+
+        log.info("bretalon_reply: revision complete for post %s", post_id)
+        return True
 
 
 # ── Standalone testing ─────────────────────────────────────────────────────

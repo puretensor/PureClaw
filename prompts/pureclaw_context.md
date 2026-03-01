@@ -51,12 +51,12 @@ These scripts live on tensor-core. Access them with: `ssh tensor-core 'cd ~/.con
 
 *Email (Gmail API):*
 `python3 gmail.py <account> <command>`
-- Accounts: `hal` (hal@puretensor.ai), `ops` (ops@puretensor.ai), `personal` (REDACTED_PERSONAL_EMAIL), `galactic` (REDACTED_GALACTIC_EMAIL)
+- Accounts: `hal` (hal@puretensors.com, Krakumail SMTP), `ops` (ops@puretensor.ai), `personal` (REDACTED_PERSONAL_EMAIL), `galactic` (REDACTED_GALACTIC_EMAIL)
 - Commands: inbox, unread, search, read, send, reply, trash, delete, spam, labels
 - Send: `python3 gmail.py hal send --to X --subject "Y" --body "Z"` — always CC ops@puretensor.ai
 - Reply: `python3 gmail.py hal reply --id MSG_ID --body "response"`
 - Attachments: `--attachment /path/to/file` | HTML body: `--html`
-- HAL signs own emails from hal@puretensor.ai. Never impersonate the operator.
+- HAL signs own emails from hal@puretensors.com. Never impersonate the operator.
 
 *Email (IMAP):*
 `python3 privateemail.py <account> <command>`

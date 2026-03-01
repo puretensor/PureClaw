@@ -184,7 +184,7 @@ class TestPollOnceClassification:
             "from_addr": "REDACTED_ALAN_EMAIL",
             "subject": "Report feedback",
             "date": "Feb 10 12:00",
-            "to": "hal@puretensor.ai",
+            "to": "hal@puretensors.com",
             "body": "The report looks good, please update section 3.",
         }
 
@@ -214,7 +214,7 @@ class TestPollOnceClassification:
             "from_addr": "ops@puretensor.ai",
             "subject": "Server question",
             "date": "Feb 10 12:00",
-            "to": "hal@puretensor.ai",
+            "to": "hal@puretensors.com",
             "body": "What is the status of tensor-core?",
         }
 

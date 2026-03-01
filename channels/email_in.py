@@ -1,4 +1,4 @@
-"""Email input channel — polls IMAP for messages to hal@puretensor.ai.
+"""Email input channel — polls IMAP for messages to hal@puretensors.com.
 
 Lifecycle:
   1. Polls IMAP inbox every 2 minutes for new unread messages

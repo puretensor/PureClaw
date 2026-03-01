@@ -132,7 +132,7 @@ class TestAutoReply:
         The pureclaw_email_responder observer handles hal@ with a strict allowlist.
         """
         assert classify_email(
-            "stranger@company.com", "Hello", to_addr="hal@puretensor.ai"
+            "stranger@company.com", "Hello", to_addr="hal@puretensors.com"
         ) == "notify"
 
 
