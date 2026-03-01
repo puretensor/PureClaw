@@ -22,7 +22,7 @@ from db import (
 log = logging.getLogger("nexus")
 
 GMAIL_SCRIPT = Path.home() / ".config" / "puretensor" / "gmail.py"
-GMAIL_IDENTITY = "hal"  # sends as hal@example.com
+GMAIL_IDENTITY = "hal"  # sends as hal@example.com (mail provider SMTP)
 
 
 async def create_email_draft(

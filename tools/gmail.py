@@ -54,8 +54,9 @@ ACCOUNTS = {
 
 # Shorthand aliases → resolved to (account, from_alias, from_name)
 # Use: python3 gmail.py hal send --to ... --subject ... --body ...
+# account='mail_provider' routes through SMTP instead of Gmail API
 IDENTITY_ALIASES = {
-    'hal': ('ops', 'hal@example.com', 'PureClaw'),               # PureClaw as PT AI employee
+    'hal': ('mail_provider', 'hal@example.com', 'PureClaw'),      # PureClaw on mail provider
     'hal-org': ('ops', 'hal@example.com', 'PureClaw'),         # PureClaw as PT Foundation director
     'heimir': ('ops', 'ops@puretensor.ai', 'REDACTED_NAME'),    # Heimir via ops
 }
@@ -65,8 +66,17 @@ IDENTITY_ALIASES = {
 SEND_IDENTITIES = {
     'ops': {
         'ops@puretensor.ai': 'PureTensorAI',
-        'hal@example.com': 'PureClaw',             # Alias on ops account
         'hal@example.com': 'PureClaw',            # Send As on ops account
+    },
+}
+
+# mail provider SMTP — non-Gmail identities routed via direct SMTP
+EXTERNAL_SMTP = {
+    'hal@example.com': {
+        'host': 'mail.example.com',
+        'port': 587,
+        'username': 'hal@example.com',
+        'password': os.environ.get('HAL_SMTP_PASSWORD', ''),
     },
 }
 
@@ -476,6 +486,69 @@ def send_message(account_key, to, subject, body, cc=None, bcc=None,
     return result
 
 
+def send_via_mail_provider(from_addr, to, subject, body, cc=None, bcc=None,
+                       from_name=None, html=False, attachments=None,
+                       in_reply_to=None):
+    """Send email via mail provider SMTP (for non-Gmail identities like hal@example.com)."""
+    import smtplib
+
+    if from_addr not in EXTERNAL_SMTP:
+        print(f"ERROR: No mail provider config for {from_addr}")
+        sys.exit(1)
+
+    cfg = EXTERNAL_SMTP[from_addr]
+    display = from_name or from_addr
+    from_header = f'{display} <{from_addr}>'
+
+    # Build MIME message
+    if attachments:
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(body, 'html' if html else 'plain'))
+        for filepath in attachments:
+            part = MIMEBase('application', 'octet-stream')
+            with open(filepath, 'rb') as f:
+                part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition',
+                            f'attachment; filename="{Path(filepath).name}"')
+            msg.attach(part)
+    else:
+        msg = MIMEText(body, 'html' if html else 'plain')
+
+    msg['To'] = to
+    msg['From'] = from_header
+    msg['Subject'] = subject
+    if cc:
+        msg['Cc'] = cc
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+        msg['References'] = in_reply_to
+
+    # Send via SMTP STARTTLS
+    try:
+        with smtplib.SMTP(cfg['host'], cfg['port'], timeout=30) as smtp:
+            smtp.starttls()
+            smtp.login(cfg['username'], cfg['password'])
+            recipients = [to]
+            if cc:
+                recipients.extend(a.strip() for a in cc.split(','))
+            if bcc:
+                recipients.extend(a.strip() for a in bcc.split(','))
+            smtp.sendmail(from_addr, recipients, msg.as_string())
+    except Exception as e:
+        print(f"\nERROR: SMTP send failed: {e}")
+        sys.exit(1)
+
+    print(f"\nSent (mail provider SMTP):")
+    print(f"  From:    {from_header}")
+    print(f"  To:      {to}")
+    if cc:
+        print(f"  Cc:      {cc}")
+    print(f"  Subject: {subject}")
+
+    return {'id': 'mail_provider-smtp', 'status': 'sent'}
+
+
 def list_send_aliases(account_key):
     """List configured Send As aliases for an account."""
     service = get_service(account_key)
@@ -535,6 +608,55 @@ def main():
         accounts = list(ACCOUNTS.keys())
     else:
         accounts = [args.account]
+
+    # mail provider identity — route send/reply through SMTP, reject other commands
+    if accounts == ['mail_provider']:
+        if args.command == 'send':
+            if not args.to:
+                print("--to required for send")
+                sys.exit(1)
+            if not args.subject:
+                print("--subject required for send")
+                sys.exit(1)
+            body = args.body or ''
+            if args.body_file:
+                with open(args.body_file, 'r') as f:
+                    body = f.read()
+            if not body:
+                print("--body or --body-file required for send")
+                sys.exit(1)
+            send_via_mail_provider(
+                identity_from_alias, args.to, args.subject, body,
+                cc=args.cc, bcc=args.bcc,
+                from_name=args.from_name or identity_from_name,
+                html=args.html, attachments=args.attachment,
+            )
+        elif args.command == 'reply':
+            if not args.id:
+                print("--id required for reply (Message-ID to reply to)")
+                sys.exit(1)
+            body = args.body or ''
+            if args.body_file:
+                with open(args.body_file, 'r') as f:
+                    body = f.read()
+            if not body:
+                print("--body or --body-file required for reply")
+                sys.exit(1)
+            # For mail provider replies, use the provided ID as In-Reply-To
+            # and default the subject to Re: original subject
+            subject = args.subject or f"Re: {args.id}"
+            send_via_mail_provider(
+                identity_from_alias, args.to or '', subject, body,
+                cc=args.cc, bcc=args.bcc,
+                from_name=args.from_name or identity_from_name,
+                html=args.html, attachments=args.attachment,
+                in_reply_to=args.id,
+            )
+        else:
+            print(f"Command '{args.command}' not supported for mail provider identity '{args.account}'")
+            print("Use privateemail.py or IMAP tools for inbox/search operations")
+            sys.exit(1)
+        return
 
     for acc in accounts:
         if len(accounts) > 1:

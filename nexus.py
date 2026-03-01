@@ -47,6 +47,7 @@ def _build_observer_registry():
         ("observers.memory_sync", "MemorySyncObserver"),
         ("observers.daily_report", "DailyReportObserver"),
         ("observers.bretalon_autopublish", "BretalonAutoPublishObserver"),
+        ("observers.bretalon_autopublish", "BretalonReplyObserver"),
     ]
 
     import importlib
