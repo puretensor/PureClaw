@@ -666,7 +666,7 @@ async def cmd_remember(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Usage: /remember <fact>\n\n"
             "Examples:\n"
             "/remember prefer dark mode for all UIs\n"
-            "/remember tensor-core IP is 192.168.4.129\n"
+            "/remember tensor-core has 512GB RAM\n"
             "/remember --people Alan is CTO of Bretalon\n\n"
             "Categories: --preferences, --infrastructure, --people, --projects"
         )
