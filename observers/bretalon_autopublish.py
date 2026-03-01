@@ -872,14 +872,57 @@ class BretalonAutoPublishObserver(Observer):
 
     def _send_review_email(self, article: dict, post_info: dict,
                            council: CouncilResult) -> bool:
-        """Send review email via gmail.py (hal@puretensor.ai). Returns True on success."""
-        recipients_raw = os.environ.get("BRETALON_TO", "REDACTED_ALAN_EMAIL,REDACTED_HH_EMAIL")
-        recipients = [r.strip() for r in recipients_raw.split(",") if r.strip()]
+        """Send review emails via gmail.py (hal@puretensor.ai).
 
-        # Format publish date
+        Alan gets a clean editorial email — no AI/tech mentions, reads like a
+        human subordinate submitted the piece for approval.
+        HH gets the full technical spec including council scores and pipeline details.
+        """
+        alan_email = os.environ.get("BRETALON_ALAN", "REDACTED_ALAN_EMAIL")
+        hh_email = os.environ.get("BRETALON_HH", "REDACTED_HH_EMAIL")
+
         pub_display = post_info.get("publish_date", "TBD")
+        pub_date_only = pub_display.split(" ")[0]
+        body_text = article["body"]
+        title_esc = self._esc(article["title"])
+        subtitle_esc = self._esc(article.get("subtitle", ""))
+        subject = f"[BRETALON] {article['title']} — for approval"
 
-        # Build council scores table (HTML)
+        gmail_script = os.path.join(os.path.expanduser("~"),
+                                    ".config", "puretensor", "gmail.py")
+
+        # ── Alan's email: clean editorial, no AI/tech language ───────────────
+        alan_html = f"""\
+<html>
+<body style="font-family: Georgia, serif; max-width: 700px; margin: 0 auto; color: #222; line-height: 1.7;">
+<p>Alan,</p>
+
+<p>Please find below a new article prepared for bretalon.com, scheduled to publish
+on <strong>{pub_date_only}</strong>. I'd appreciate your sign-off before it goes live.</p>
+
+<h2 style="color: #1a1a1a; margin-top: 2em; font-size: 1.4em;">{title_esc}</h2>
+<p style="color: #555; font-style: italic; margin-top: 0;">{subtitle_esc}</p>
+
+<div style="margin: 2em 0; padding: 1.5em; border-left: 3px solid #ccc;
+     background: #f9f9f9; white-space: pre-wrap; font-size: 14px; line-height: 1.8;">
+{self._esc(body_text)}
+</div>
+
+<p style="margin-top: 2em;">Please reply with one of the following:</p>
+<ul>
+  <li><strong>APPROVED</strong> — publish as scheduled</li>
+  <li><strong>REVISE</strong> — include your notes and I will amend</li>
+  <li><strong>REJECTED</strong> — article will be pulled</li>
+</ul>
+<p style="color: #888; font-size: 12px;">If no reply is received, the article will publish automatically at the scheduled time.</p>
+
+<p style="margin-top: 2em;">Best,<br>HAL</p>
+</body>
+</html>"""
+
+        # ── HH's email: full technical spec ──────────────────────────────────
+
+        # Council scores table
         council_html = (
             '<table style="border-collapse:collapse;width:100%;margin:1em 0;">'
             '<tr style="background:#f0f0f0;">'
@@ -893,100 +936,102 @@ class BretalonAutoPublishObserver(Observer):
                 council_html += (
                     f'<tr><td style="padding:8px;border:1px solid #ddd;">{m.role}</td>'
                     f'<td style="padding:8px;border:1px solid #ddd;">{m.model}</td>'
-                    f'<td style="padding:8px;text-align:center;border:1px solid #ddd;">-</td>'
-                    f'<td style="padding:8px;border:1px solid #ddd;">ERROR</td></tr>'
+                    f'<td style="padding:8px;text-align:center;border:1px solid #ddd;">—</td>'
+                    f'<td style="padding:8px;border:1px solid #ddd;color:#c00;">ERROR</td></tr>'
                 )
             else:
+                score_color = "#060" if m.score >= 7.5 else ("#c60" if m.score >= 5 else "#c00")
                 council_html += (
                     f'<tr><td style="padding:8px;border:1px solid #ddd;">{m.role}</td>'
                     f'<td style="padding:8px;border:1px solid #ddd;">{m.model}</td>'
-                    f'<td style="padding:8px;text-align:center;border:1px solid #ddd;">{m.score}/10</td>'
+                    f'<td style="padding:8px;text-align:center;border:1px solid #ddd;'
+                    f'font-weight:bold;color:{score_color};">{m.score}/10</td>'
                     f'<td style="padding:8px;border:1px solid #ddd;">{m.verdict}</td></tr>'
                 )
+        avg_color = "#060" if council.average_score >= 7.5 else ("#c60" if council.average_score >= 5 else "#c00")
         council_html += (
-            f'<tr style="font-weight:bold;">'
-            f'<td style="padding:8px;border:1px solid #ddd;">Average</td>'
-            f'<td style="padding:8px;border:1px solid #ddd;"></td>'
-            f'<td style="padding:8px;text-align:center;border:1px solid #ddd;">'
+            f'<tr style="font-weight:bold;background:#f0f0f0;">'
+            f'<td style="padding:8px;border:1px solid #ddd;" colspan="2">Average ({council.responded}/{council.total} responded)</td>'
+            f'<td style="padding:8px;text-align:center;border:1px solid #ddd;color:{avg_color};">'
             f'{council.average_score:.1f}/10</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{council.verdict.upper()}</td></tr>'
             f'</table>'
         )
 
-        # Full article text — reviewers need the complete article
-        preview = article["body"]
-
-        subject = (
-            f"[BRETALON REVIEW] {article['title']} — "
-            f"Publishes {pub_display.split(' ')[0]}"
-        )
-
-        html_body = f"""\
+        hh_html = f"""\
 <html>
-<body style="font-family: Georgia, serif; max-width: 700px; margin: 0 auto; color: #222;">
-<p>Alan,</p>
-<p>The Bretalon AI Council has reviewed and approved a new article for publication on bretalon.com.</p>
+<body style="font-family: Georgia, serif; max-width: 700px; margin: 0 auto; color: #222; line-height: 1.7;">
+<p style="color:#888;font-size:11px;border-bottom:1px solid #eee;padding-bottom:8px;">
+  BRETALON AUTOPUBLISH PIPELINE · TECHNICAL REVIEW
+</p>
 
-<h2 style="color: #1a1a1a; margin-top: 2em;">{self._esc(article['title'])}</h2>
-<p style="color: #666; font-style: italic;">{self._esc(article.get('subtitle', ''))}</p>
+<h2 style="color: #1a1a1a; margin-top: 1.5em; font-size: 1.4em;">{title_esc}</h2>
+<p style="color: #555; font-style: italic; margin-top: 0;">{subtitle_esc}</p>
 
-<h3 style="color: #333;">AI Council Scores</h3>
-{council_html}
-
-<h3 style="color: #333;">Full Article</h3>
-<div style="background: #f9f9f9; padding: 1.5em; border-left: 3px solid #ccc; white-space: pre-wrap; font-size: 14px;">
-{self._esc(preview)}
-</div>
-
-<h3 style="color: #333;">Details</h3>
-<table style="border-collapse:collapse;">
-<tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Scheduled:</td><td>{pub_display}</td></tr>
-<tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Category:</td><td>Reports</td></tr>
-<tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Word count:</td><td>~{article.get('word_count', 0):,}</td></tr>
-<tr><td style="padding:4px 12px 4px 0;font-weight:bold;">Post ID:</td><td>{post_info.get('post_id', 'N/A')}</td></tr>
+<h3 style="color: #333; margin-top: 2em;">Pipeline Details</h3>
+<table style="border-collapse:collapse;font-size:14px;">
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Scheduled</td><td><strong>{pub_display}</strong></td></tr>
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Post ID</td><td>{post_info.get("post_id", "N/A")}</td></tr>
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Word count</td><td>~{article.get("word_count", 0):,}</td></tr>
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Category</td><td>Reports (ID {WP_CATEGORY_ID})</td></tr>
+<tr><td style="padding:4px 16px 4px 0;color:#666;">Featured image</td><td>{"Uploaded (ID " + str(post_info.get("attach_id")) + ")" if post_info.get("attach_id") else "None"}</td></tr>
 </table>
 
-<p style="margin-top: 2em;">Reply <strong>APPROVE</strong> to confirm, <strong>REVISE</strong> with notes, or <strong>CANCEL</strong> to kill.</p>
-<p style="color: #999; font-size: 12px;">Auto-publishes at scheduled time if no response.</p>
+<h3 style="color: #333; margin-top: 2em;">AI Council Review</h3>
+{council_html}
 
-<p>— HAL<br><span style="color:#999;font-size:12px;">Heterarchical Agentic Layer · hal@puretensor.ai</span></p>
+<h3 style="color: #333; margin-top: 2em;">Full Article</h3>
+<div style="margin: 1em 0; padding: 1.5em; border-left: 3px solid #ccc;
+     background: #f9f9f9; white-space: pre-wrap; font-size: 14px; line-height: 1.8;">
+{self._esc(body_text)}
+</div>
+
+<p style="margin-top: 2em; font-size: 13px;">
+  Reply <strong>APPROVED</strong> / <strong>REVISE</strong> (with notes) / <strong>REJECTED</strong>
+  to control publication. Auto-publishes at scheduled time if no response.
+</p>
+
+<p style="margin-top: 2em;">— HAL<br>
+<span style="color:#999;font-size:11px;">Heterarchical Agentic Layer · hal@puretensor.ai</span></p>
 </body>
 </html>"""
 
-        # Write HTML to a temp file and send via gmail.py hal
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".html",
-                                        delete=False, encoding="utf-8") as tmp:
-            tmp.write(html_body)
-            tmp_path = tmp.name
+        # ── Send both emails ──────────────────────────────────────────────────
+        success = True
+        for recipient, html_body in [
+            (alan_email, alan_html),
+            (hh_email, hh_html),
+        ]:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".html",
+                                            delete=False, encoding="utf-8") as tmp:
+                tmp.write(html_body)
+                tmp_path = tmp.name
 
-        gmail_script = os.path.join(os.path.expanduser("~"),
-                                    ".config", "puretensor", "gmail.py")
-        try:
-            for recipient in recipients:
+            try:
                 cmd = [
                     "python3", gmail_script, "hal", "send",
                     "--to", recipient,
                     "--subject", subject,
                     "--body", f"@{tmp_path}",
                     "--html",
-                    "--cc", "ops@puretensor.ai",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 if result.returncode != 0:
                     log.error("bretalon_autopublish: gmail.py failed for %s: %s",
                               recipient, result.stderr.strip())
-                    return False
-            log.info("bretalon_autopublish: review email sent via hal@puretensor.ai — %s", subject)
-            return True
-        except Exception as e:
-            log.error("bretalon_autopublish: review email failed: %s", e)
-            return False
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+                    success = False
+                else:
+                    log.info("bretalon_autopublish: review email sent to %s", recipient)
+            except Exception as e:
+                log.error("bretalon_autopublish: review email failed for %s: %s", recipient, e)
+                success = False
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        return success
 
     # ── SSH / SCP helpers ────────────────────────────────────────────────
 
