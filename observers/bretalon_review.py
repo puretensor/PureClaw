@@ -200,7 +200,7 @@ class BretalonReviewObserver(Observer):
             f"Word count:\t~{round(word_count, -1):,}\n"
             f"Post ID:\t{post_id}\n\n"
             f"Best,\n"
-            f"{sender_name or 'REDACTED_NAME_SHORT'}"
+            f"{sender_name or 'PureClaw'}"
         )
 
         msg = MIMEMultipart("alternative")
