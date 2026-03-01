@@ -84,12 +84,7 @@ def classify_email(from_addr: str, subject: str, to_addr: str = "") -> str:
     from_lower = from_addr.lower()
     subject_lower = subject.lower()
 
-    # VIP senders always get drafted replies
-    for vip in VIP_SENDERS:
-        if vip in from_lower:
-            return "auto_reply"
-
-    # Check ignore rules
+    # Check ignore rules FIRST (noreply, mailer-daemon, etc.)
     for pattern in IGNORE_SENDERS:
         if pattern in from_lower:
             return "ignore"
@@ -97,6 +92,11 @@ def classify_email(from_addr: str, subject: str, to_addr: str = "") -> str:
     for pattern in IGNORE_SUBJECTS:
         if re.search(pattern, subject_lower):
             return "ignore"
+
+    # VIP senders (whitelisted domains) get drafted replies via Claude
+    for vip in VIP_SENDERS:
+        if vip in from_lower:
+            return "auto_reply"
 
     # Check notify rules
     for pattern in NOTIFY_SENDERS:
@@ -107,9 +107,7 @@ def classify_email(from_addr: str, subject: str, to_addr: str = "") -> str:
         if re.search(pattern, subject_lower):
             return "notify"
 
-    # Direct emails to hal@ from unknown senders: notify only (no LLM).
-    # The pureclaw_email_responder observer handles hal@ with a strict allowlist.
-    # Do NOT send unknown sender content to the LLM here.
+    # Emails to hal@ from non-whitelisted senders: notify only (no LLM).
     if to_addr and "hal@" in to_addr.lower():
         return "notify"
 
