@@ -127,7 +127,32 @@ def _sanitize_history(messages: list[dict]) -> list[dict]:
                     continue
         final.append(msg)
 
-    return final
+    # --- Pass 3: enforce alternating roles ---
+    # Bedrock Converse API requires strictly alternating user/assistant messages.
+    # Duplicate saves from the tool loop can create consecutive assistant messages.
+    # Merge consecutive same-role messages to fix this.
+    if not final:
+        return final
+
+    alternating = [final[0]]
+    for msg in final[1:]:
+        if msg.get("role") == alternating[-1].get("role"):
+            log.warning(
+                "Merging consecutive %s messages in history",
+                msg.get("role"),
+            )
+            prev_content = alternating[-1].get("content")
+            curr_content = msg.get("content")
+            # Prefer list content; merge if both are lists
+            if isinstance(prev_content, list) and isinstance(curr_content, list):
+                alternating[-1] = {**alternating[-1], "content": prev_content + curr_content}
+            elif isinstance(curr_content, list):
+                alternating[-1] = msg
+            # else: keep previous (it's a list or both are strings — drop duplicate)
+        else:
+            alternating.append(msg)
+
+    return alternating
 
 # Reusable cache directive
 _CACHE_EPHEMERAL = {"type": "ephemeral"}
@@ -376,9 +401,9 @@ class AnthropicAPIBackend:
             )
             result_text = result.get("result", "")
             if result_text:
-                save_conversation_history(session_id, messages + [
-                    {"role": "assistant", "content": result_text}
-                ])
+                # messages was modified in place by the tool loop and already
+                # contains the final assistant message — don't append a duplicate
+                save_conversation_history(session_id, messages)
             result["session_id"] = session_id
             return result
 
@@ -449,9 +474,9 @@ class AnthropicAPIBackend:
             )
             result_text = result.get("result", "")
             if result_text:
-                save_conversation_history(session_id, messages + [
-                    {"role": "assistant", "content": result_text}
-                ])
+                # messages was modified in place by the tool loop and already
+                # contains the final assistant message — don't append a duplicate
+                save_conversation_history(session_id, messages)
             result["session_id"] = session_id
             return result
 

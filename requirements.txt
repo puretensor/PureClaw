@@ -11,3 +11,20 @@ fpdf2>=2.8.0
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
+
+# AWS Bedrock (Claude synthesis for daily reports)
+boto3>=1.35.0
+
+# Google Generative AI (Imagen 4 image gen, Gemini Deep Research)
+google-genai>=1.0.0
+
+# Document generation (skills support)
+reportlab>=4.4.0
+pdfplumber>=0.11.0
+pypdfium2>=4.0.0
+python-docx>=1.0.0
+openpyxl>=3.1.0
+python-pptx>=1.0.0
+pypdf>=4.0.0
+img2pdf>=0.5.0
+pandas>=2.0.0

@@ -23,6 +23,7 @@ def get_backend():
         "ollama": ("backends.ollama", "OllamaBackend"),
         "claude_code": ("backends.claude_code", "ClaudeCodeBackend"),
         "anthropic_api": ("backends.anthropic_api", "AnthropicAPIBackend"),
+        "bedrock_api": ("backends.bedrock_api", "BedrockAPIBackend"),
         "codex_cli": ("backends.codex_cli", "CodexCLIBackend"),
         "gemini_cli": ("backends.gemini_cli", "GeminiCLIBackend"),
         "vllm": ("backends.vllm", "VLLMBackend"),

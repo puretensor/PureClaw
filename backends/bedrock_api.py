@@ -1,0 +1,459 @@
+"""AWS Bedrock backend — Claude via boto3 Converse API with tool support.
+
+Uses existing AWS credentials (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
+from environment. Mirrors the AnthropicAPIBackend interface: tool loop,
+history sanitization, prompt caching hints, streaming progress callbacks.
+
+Bedrock Converse API docs:
+  https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+
+import boto3
+
+from db import get_conversation_history, save_conversation_history
+from backends.anthropic_api import _sanitize_history, _build_system_blocks
+from backends.tools import TOOL_SCHEMAS, ToolCall, run_tool_loop_sync, run_tool_loop_async
+
+log = logging.getLogger("nexus")
+
+# Bedrock model ID map
+_BEDROCK_MODEL_MAP = {
+    "sonnet": "us.anthropic.claude-sonnet-4-6",
+    "opus": "us.anthropic.claude-opus-4-6",
+    "haiku": "us.anthropic.claude-haiku-4-5-20251001",
+}
+
+# Pricing per million tokens (USD) for cost logging
+_PRICING = {
+    "us.anthropic.claude-sonnet-4-6": (3.0, 15.0),
+    "us.anthropic.claude-opus-4-6": (15.0, 75.0),
+    "us.anthropic.claude-haiku-4-5-20251001": (0.80, 4.0),
+}
+
+
+def _bedrock_tools() -> list[dict]:
+    """Convert OpenAI-style tool schemas to Bedrock toolConfig format."""
+    tools = []
+    for t in TOOL_SCHEMAS:
+        fn = t.get("function", {})
+        params = fn.get("parameters", {"type": "object", "properties": {}})
+        tools.append({
+            "toolSpec": {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "inputSchema": {"json": params},
+            }
+        })
+    return tools
+
+
+def _convert_history_to_bedrock(messages: list[dict]) -> list[dict]:
+    """Convert Anthropic-format history to Bedrock Converse format.
+
+    Anthropic uses:
+      {"role": "user", "content": "text"} or
+      {"role": "user", "content": [{"type": "text", "text": ...}, ...]}
+      {"role": "assistant", "content": [{"type": "text", ...}, {"type": "tool_use", ...}]}
+      {"role": "user", "content": [{"type": "tool_result", "tool_use_id": ..., "content": ...}]}
+
+    Bedrock uses:
+      {"role": "user", "content": [{"text": "..."}]}
+      {"role": "assistant", "content": [{"text": "..."}, {"toolUse": {"toolUseId": ..., "name": ..., "input": ...}}]}
+      {"role": "user", "content": [{"toolResult": {"toolUseId": ..., "content": [{"text": "..."}]}}]}
+
+    Bedrock requires strictly alternating user/assistant roles. The tool loop
+    may produce consecutive user messages (one per tool_result), so we merge
+    consecutive same-role messages into one.
+    """
+    raw = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content")
+
+        if isinstance(content, str):
+            raw.append({"role": role, "content": [{"text": content}]})
+            continue
+
+        if not isinstance(content, list):
+            raw.append({"role": role, "content": [{"text": str(content)}]})
+            continue
+
+        blocks = []
+        for block in content:
+            if isinstance(block, str):
+                blocks.append({"text": block})
+            elif not isinstance(block, dict):
+                continue
+            elif block.get("type") == "text":
+                blocks.append({"text": block.get("text", "")})
+            elif block.get("type") == "tool_use":
+                blocks.append({
+                    "toolUse": {
+                        "toolUseId": block.get("id", ""),
+                        "name": block.get("name", ""),
+                        "input": block.get("input", {}),
+                    }
+                })
+            elif block.get("type") == "tool_result":
+                result_content = block.get("content", "")
+                if isinstance(result_content, str):
+                    result_blocks = [{"text": result_content}]
+                elif isinstance(result_content, list):
+                    result_blocks = []
+                    for rb in result_content:
+                        if isinstance(rb, dict) and rb.get("type") == "text":
+                            result_blocks.append({"text": rb.get("text", "")})
+                        elif isinstance(rb, str):
+                            result_blocks.append({"text": rb})
+                    if not result_blocks:
+                        result_blocks = [{"text": "(empty)"}]
+                else:
+                    result_blocks = [{"text": str(result_content)}]
+
+                blocks.append({
+                    "toolResult": {
+                        "toolUseId": block.get("tool_use_id", ""),
+                        "content": result_blocks,
+                    }
+                })
+            else:
+                # Unknown block type — convert to text
+                blocks.append({"text": str(block)})
+
+        if blocks:
+            raw.append({"role": role, "content": blocks})
+
+    # Merge consecutive same-role messages (Bedrock requires alternating roles)
+    converted = []
+    for msg in raw:
+        if converted and converted[-1]["role"] == msg["role"]:
+            converted[-1]["content"].extend(msg["content"])
+        else:
+            converted.append(msg)
+
+    return converted
+
+
+def _log_bedrock_usage(usage: dict, model_id: str, label: str = "") -> None:
+    """Log token usage and estimated cost from Bedrock response."""
+    input_tokens = usage.get("inputTokens", 0)
+    output_tokens = usage.get("outputTokens", 0)
+    cache_read = usage.get("cacheReadInputTokens", 0)
+    cache_write = usage.get("cacheWriteInputTokens", 0)
+
+    prefix = f"[{label}] " if label else ""
+
+    # Estimate cost
+    input_price, output_price = _PRICING.get(model_id, (3.0, 15.0))
+    cost_in = input_tokens * input_price / 1_000_000
+    cost_out = output_tokens * output_price / 1_000_000
+    total_cost = cost_in + cost_out
+
+    log.info(
+        "%sBedrock usage: in=%d (cache_read=%d, cache_write=%d) out=%d cost=$%.4f",
+        prefix, input_tokens, cache_read, cache_write, output_tokens, total_cost,
+    )
+
+
+class BedrockAPIBackend:
+    """Backend that calls Claude via AWS Bedrock Converse API with tool loop."""
+
+    def __init__(self):
+        from config import (
+            BEDROCK_REGION,
+            BEDROCK_MODEL,
+            BEDROCK_MAX_TOKENS,
+            ANTHROPIC_TOOLS_ENABLED,
+            ANTHROPIC_TOOL_MAX_ITER,
+            ANTHROPIC_TOOL_TIMEOUT,
+            ANTHROPIC_TOTAL_TIMEOUT,
+            CLAUDE_CWD,
+        )
+
+        self._region = BEDROCK_REGION
+        self._default_model = BEDROCK_MODEL
+        self._max_tokens = BEDROCK_MAX_TOKENS
+        self._tools_enabled = ANTHROPIC_TOOLS_ENABLED
+        self._max_iterations = ANTHROPIC_TOOL_MAX_ITER
+        self._tool_timeout = ANTHROPIC_TOOL_TIMEOUT
+        self._total_timeout = ANTHROPIC_TOTAL_TIMEOUT
+        self._cwd = CLAUDE_CWD
+
+        self._client = boto3.client("bedrock-runtime", region_name=self._region)
+        self._tools = _bedrock_tools() if self._tools_enabled else None
+
+    @property
+    def name(self) -> str:
+        return "bedrock_api"
+
+    def get_model_display(self, model: str) -> str:
+        return self._resolve_model(model)
+
+    @property
+    def supports_streaming(self) -> bool:
+        return True
+
+    @property
+    def supports_tools(self) -> bool:
+        return self._tools_enabled
+
+    @property
+    def supports_sessions(self) -> bool:
+        return False
+
+    def _resolve_model(self, model: str) -> str:
+        if not model:
+            return self._default_model
+        return _BEDROCK_MODEL_MAP.get(model, model)
+
+    # ------------------------------------------------------------------
+    # Response parsing helpers
+    # ------------------------------------------------------------------
+
+    def _parse_response(self, resp: dict) -> tuple[str, list[ToolCall], dict]:
+        """Parse Bedrock converse response into (text, tool_calls, assistant_msg).
+
+        Returns the assistant message in Anthropic-compatible format so it can
+        be appended to the shared conversation history without conversion.
+        """
+        usage = resp.get("usage", {})
+        model_id = self._default_model  # approximate — response doesn't echo model
+        _log_bedrock_usage(usage, model_id, "bedrock")
+
+        output = resp.get("output", {})
+        message = output.get("message", {})
+        content_blocks = message.get("content", [])
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        anthropic_blocks: list[dict] = []  # Store in Anthropic format for history
+
+        for block in content_blocks:
+            if "text" in block:
+                text_parts.append(block["text"])
+                anthropic_blocks.append({"type": "text", "text": block["text"]})
+            elif "toolUse" in block:
+                tu = block["toolUse"]
+                tool_calls.append(
+                    ToolCall(
+                        id=tu.get("toolUseId", ""),
+                        name=tu.get("name", ""),
+                        arguments=tu.get("input", {}),
+                    )
+                )
+                anthropic_blocks.append({
+                    "type": "tool_use",
+                    "id": tu.get("toolUseId", ""),
+                    "name": tu.get("name", ""),
+                    "input": tu.get("input", {}),
+                })
+
+        # Return assistant msg in Anthropic format (consistent with history DB)
+        assistant_msg = {"role": "assistant", "content": anthropic_blocks}
+        return ("\n".join(text_parts).strip(), tool_calls, assistant_msg)
+
+    @staticmethod
+    def _format_tool_result(tool_name: str, call_id: str, result_str: str) -> dict:
+        """Format tool result in Anthropic-compatible format for history."""
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "content": result_str,
+                }
+            ],
+        }
+
+    # ------------------------------------------------------------------
+    # Core API call
+    # ------------------------------------------------------------------
+
+    def _build_converse_kwargs(
+        self,
+        model_id: str,
+        messages: list[dict],
+        system_prompt: str | None,
+        memory_context: str | None,
+        extra_system_prompt: str | None = None,
+    ) -> dict:
+        """Build kwargs for bedrock-runtime converse() call."""
+        # Convert history from Anthropic format to Bedrock format
+        bedrock_messages = _convert_history_to_bedrock(messages)
+
+        kwargs = {
+            "modelId": model_id,
+            "messages": bedrock_messages,
+            "inferenceConfig": {
+                "maxTokens": self._max_tokens,
+            },
+        }
+
+        # System prompt — Bedrock takes system=[{"text": "..."}]
+        system_blocks = _build_system_blocks(system_prompt, memory_context, extra_system_prompt)
+        if system_blocks:
+            # Flatten to Bedrock format (list of {"text": ...})
+            bedrock_system = []
+            for block in system_blocks:
+                text = block.get("text", "")
+                if text:
+                    bedrock_system.append({"text": text})
+            if bedrock_system:
+                kwargs["system"] = bedrock_system
+
+        # Tools
+        if self._tools_enabled and self._tools:
+            kwargs["toolConfig"] = {"tools": self._tools}
+
+        return kwargs
+
+    def _converse(self, model_id: str, messages: list[dict], **system_kw) -> dict:
+        """Synchronous converse call."""
+        kwargs = self._build_converse_kwargs(model_id, messages, **system_kw)
+        return self._client.converse(**kwargs)
+
+    async def _converse_async(self, model_id: str, messages: list[dict], **system_kw) -> dict:
+        """Async converse call (runs boto3 sync client in thread pool)."""
+        kwargs = self._build_converse_kwargs(model_id, messages, **system_kw)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self._client.converse(**kwargs))
+
+    # ------------------------------------------------------------------
+    # Sync call (for observers)
+    # ------------------------------------------------------------------
+
+    def call_sync(
+        self,
+        prompt: str,
+        *,
+        model: str = "sonnet",
+        session_id: str | None = None,
+        timeout: int = 300,
+        system_prompt: str | None = None,
+        memory_context: str | None = None,
+    ) -> dict:
+        session_id = session_id or str(uuid.uuid4())
+        model_id = self._resolve_model(model)
+
+        history = _sanitize_history(get_conversation_history(session_id))
+        messages = history + [{"role": "user", "content": prompt}]
+
+        system_kw = dict(
+            system_prompt=system_prompt,
+            memory_context=memory_context,
+        )
+
+        def send_request(msgs):
+            return self._converse(model_id, msgs, **system_kw)
+
+        if self._tools_enabled:
+            try:
+                result = run_tool_loop_sync(
+                    messages,
+                    send_request,
+                    self._parse_response,
+                    self._format_tool_result,
+                    max_iterations=self._max_iterations,
+                    tool_timeout=self._tool_timeout,
+                    total_timeout=min(timeout, self._total_timeout),
+                    cwd=self._cwd,
+                )
+            except Exception as e:
+                log.error("Bedrock tool loop error (sync): %s", e)
+                return {"result": f"Bedrock error: {e}", "session_id": session_id}
+            result_text = result.get("result", "")
+            if result_text:
+                # messages was modified in place by the tool loop and already
+                # contains the final assistant message — don't append a duplicate
+                save_conversation_history(session_id, messages)
+            result["session_id"] = session_id
+            return result
+
+        # No tools — single request
+        try:
+            resp = send_request(messages)
+        except Exception as e:
+            return {"result": f"Bedrock error: {e}", "session_id": session_id}
+
+        text, _tool_calls, _assistant_msg = self._parse_response(resp)
+        if text:
+            save_conversation_history(session_id, messages + [
+                {"role": "assistant", "content": text}
+            ])
+        return {"result": text or "(empty response)", "session_id": session_id}
+
+    # ------------------------------------------------------------------
+    # Async call (for Telegram with progress)
+    # ------------------------------------------------------------------
+
+    async def call_streaming(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+        model: str = "sonnet",
+        on_progress=None,
+        streaming_editor=None,
+        system_prompt: str | None = None,
+        memory_context: str | None = None,
+        extra_system_prompt: str | None = None,
+    ) -> dict:
+        session_id = session_id or str(uuid.uuid4())
+        model_id = self._resolve_model(model)
+
+        history = _sanitize_history(get_conversation_history(session_id))
+        messages = history + [{"role": "user", "content": message}]
+
+        system_kw = dict(
+            system_prompt=system_prompt,
+            memory_context=memory_context,
+            extra_system_prompt=extra_system_prompt,
+        )
+
+        async def send_request(msgs):
+            return await self._converse_async(model_id, msgs, **system_kw)
+
+        if self._tools_enabled:
+            try:
+                result = await run_tool_loop_async(
+                    messages,
+                    send_request,
+                    self._parse_response,
+                    self._format_tool_result,
+                    max_iterations=self._max_iterations,
+                    tool_timeout=self._tool_timeout,
+                    total_timeout=self._total_timeout,
+                    cwd=self._cwd,
+                    streaming_editor=streaming_editor,
+                    on_progress=on_progress,
+                )
+            except Exception as e:
+                log.error("Bedrock tool loop error (async): %s", e)
+                return {"result": f"Bedrock error: {e}", "session_id": session_id, "written_files": []}
+            result_text = result.get("result", "")
+            if result_text:
+                # messages was modified in place by the tool loop and already
+                # contains the final assistant message — don't append a duplicate
+                save_conversation_history(session_id, messages)
+            result["session_id"] = session_id
+            return result
+
+        # No tools — single request
+        try:
+            resp = await send_request(messages)
+        except Exception as e:
+            return {"result": f"Bedrock error: {e}", "session_id": session_id, "written_files": []}
+
+        text, _tool_calls, _assistant_msg = self._parse_response(resp)
+        if text:
+            save_conversation_history(session_id, messages + [
+                {"role": "assistant", "content": text}
+            ])
+        return {"result": text or "(empty response)", "session_id": session_id, "written_files": []}
