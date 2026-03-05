@@ -108,8 +108,7 @@ HYBRID_TC_HOST: "tensor-core"
 
 The K8s pod has:
 - SSH key at `/app/.ssh/id_ed25519` (copied from TC's key via K8s secret)
-- SSH config at `/app/.ssh/config` (from `~/.ssh/config.puretensor`)
-- `tensor-core` entry: `100.121.42.54` (Tailscale IP), user `puretensorai`
+- SSH config at `/app/.ssh/config` (maps `tensor-core` hostname)
 - `StrictHostKeyChecking accept-new`
 - Already used by observers (git_push, git_auto_sync, daily_report)
 
@@ -155,6 +154,6 @@ The HybridBackend's fallback chain catches these and retries via API.
 ## Security Notes
 
 - SSH key is the same key used by all pod→TC operations (not a new attack surface)
-- Claude CLI on TC runs as `puretensorai` user (same as interactive sessions)
+- Claude CLI on TC runs as the same user as interactive sessions
 - `--dangerously-skip-permissions` is required for non-interactive execution
 - The TC CLAUDE.md instructions apply to remote CLI sessions (same rules)
