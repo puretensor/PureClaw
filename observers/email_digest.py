@@ -207,7 +207,11 @@ class EmailDigestObserver(Observer):
         log.info("Found %d new unread emails. Asking Claude to summarize...", len(all_new))
 
         # Ask Claude to make sense of it
+        now_str = self.now_utc().strftime("%A %d %B %Y, %H:%M UTC")
         prompt = (
+            f"Today is {now_str}. This is the actual current date — trust it completely. "
+            f"Do NOT treat events or documents dated 2025 or 2026 as speculative or forward-looking "
+            f"simply because they are near your training cutoff. They are real and current.\n\n"
             f"You are an email assistant. Here are {len(all_new)} new unread emails "
             f"across multiple accounts:\n\n"
             f"{raw_summary}\n\n"
@@ -215,7 +219,7 @@ class EmailDigestObserver(Observer):
             "1. Flag anything that looks urgent or needs a reply\n"
             "2. Group newsletters/marketing separately\n"
             "3. Note anything unusual\n"
-            "Keep it concise -- this goes to a Telegram message. "
+            "Keep it concise — this goes to a Telegram message. "
             "Use plain text, no markdown."
         )
 

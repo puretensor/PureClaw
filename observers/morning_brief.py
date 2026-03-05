@@ -271,6 +271,12 @@ class MorningBriefObserver(Observer):
     def _build_prompt(sections: dict[str, str]) -> str:
         """Build the Claude prompt from gathered data sections."""
         parts = []
+        from datetime import datetime, timezone
+        now_str = datetime.now(timezone.utc).strftime("%A %d %B %Y, %H:%M UTC")
+        parts.append(
+            f"Today is {now_str}. Trust this date — it is accurate. "
+            f"Do not treat 2025-2026 events as speculative or forward-looking.\n"
+        )
         parts.append("Here is the data for today's morning briefing:\n")
 
         parts.append("== EMAILS ==")
