@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 with patch.dict("os.environ", {
     "TELEGRAM_BOT_TOKEN": "fake:token",
     "AUTHORIZED_USER_ID": "12345",
+    "VIP_SENDERS": "vip-user@example.com,ops@puretensor.ai,vip-user@example.com",
 }):
     from channels.email_in import (
         EmailInputChannel,
@@ -28,8 +29,10 @@ with patch.dict("os.environ", {
         _decode_header,
         _extract_email_addr,
         _get_body,
+        _email_chat_id,
+        EMAIL_CHAT_ID_OFFSET,
     )
-    from db import init_db, is_email_seen, mark_email_seen
+    from db import init_db, is_email_seen, mark_email_seen, get_session
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +52,7 @@ def fresh_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def accounts_file(tmp_path, monkeypatch):
-    """Create a temporary email accounts file."""
+    """Create a temporary email accounts file with primary role."""
     accts = [
         {
             "name": "test-acct",
@@ -57,6 +60,7 @@ def accounts_file(tmp_path, monkeypatch):
             "port": 993,
             "username": "test@example.com",
             "password": "secret",
+            "role": "primary",
         }
     ]
     path = tmp_path / "email_accounts.json"
@@ -134,6 +138,7 @@ class TestPollOnceClassification:
             "from_addr": "noreply@example.com",
             "subject": "Your order shipped",
             "date": "Feb 10 12:00",
+            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
             "to": "ops@puretensor.ai",
             "body": "Your package is on the way.",
         }
@@ -158,6 +163,7 @@ class TestPollOnceClassification:
             "from_addr": "receipts@stripe.com",
             "subject": "Payment receipt",
             "date": "Feb 10 12:00",
+            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
             "to": "ops@puretensor.ai",
             "body": "You received a payment of $100.",
         }
@@ -171,8 +177,11 @@ class TestPollOnceClassification:
         assert "stripe.com" in call_kwargs["text"]
 
     @pytest.mark.asyncio
-    async def test_auto_reply_creates_draft(self, accounts_file):
-        """Emails classified as 'auto_reply' should call Claude and create a draft."""
+    async def test_auto_reply_sends_directly(self, accounts_file, monkeypatch):
+        """Emails classified as 'auto_reply' should use call_streaming and send reply directly."""
+        monkeypatch.setattr("drafts.classifier.VIP_SENDERS",
+                            ["vip-user@example.com", "ops@puretensor.ai"])
+
         mock_bot = MagicMock()
         mock_bot.send_message = AsyncMock()
 
@@ -184,25 +193,37 @@ class TestPollOnceClassification:
             "from_addr": "vip-user@example.com",
             "subject": "Report feedback",
             "date": "Feb 10 12:00",
+            "date_raw": "Tue, 03 Mar 2026 12:00:00 +0000",
             "to": "hal@example.com",
             "body": "The report looks good, please update section 3.",
         }
 
+        mock_run = MagicMock()
+        mock_run.returncode = 0
+
+        mock_streaming = AsyncMock(return_value={
+            "result": "Thank you for the feedback, Alan.",
+            "session_id": "sess-email-001",
+            "written_files": [],
+        })
+
         with patch("channels.email_in.fetch_new_emails", return_value=[fake_email]), \
-             patch("engine.call_sync", return_value={"result": "Thank you for the feedback, Alan."}), \
-             patch("channels.email_in.create_email_draft", new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = 1
+             patch("engine.call_streaming", mock_streaming), \
+             patch("subprocess.run", return_value=mock_run):
             await channel._poll_once()
 
-            mock_create.assert_awaited_once()
-            call_kwargs = mock_create.call_args[1]
-            assert call_kwargs["email_from"] == "vip-user@example.com"
-            assert call_kwargs["email_subject"] == "Report feedback"
-            assert "Thank you" in call_kwargs["draft_body"]
+        # Should have sent a [SENT] notification via Telegram
+        mock_bot.send_message.assert_called_once()
+        call_kwargs = mock_bot.send_message.call_args[1]
+        assert "[SENT]" in call_kwargs["text"]
+        assert "vip-user@example.com" in call_kwargs["text"]
 
     @pytest.mark.asyncio
-    async def test_auto_reply_fallback_on_claude_failure(self, accounts_file):
-        """If Claude fails, auto_reply should fall back to notification."""
+    async def test_auto_reply_fallback_on_engine_failure(self, accounts_file, monkeypatch):
+        """If call_streaming fails, auto_reply should fall back to notification."""
+        monkeypatch.setattr("drafts.classifier.VIP_SENDERS",
+                            ["vip-user@example.com", "ops@puretensor.ai"])
+
         mock_bot = MagicMock()
         mock_bot.send_message = AsyncMock()
 
@@ -214,12 +235,15 @@ class TestPollOnceClassification:
             "from_addr": "ops@puretensor.ai",
             "subject": "Server question",
             "date": "Feb 10 12:00",
+            "date_raw": "Tue, 03 Mar 2026 12:00:00 +0000",
             "to": "hal@example.com",
             "body": "What is the status of tensor-core?",
         }
 
+        mock_streaming = AsyncMock(side_effect=RuntimeError("Engine unavailable"))
+
         with patch("channels.email_in.fetch_new_emails", return_value=[fake_email]), \
-             patch("engine.call_sync", side_effect=RuntimeError("Claude unavailable")):
+             patch("engine.call_streaming", mock_streaming):
             await channel._poll_once()
 
         # Should fall back to notification
@@ -252,6 +276,7 @@ class TestDeduplication:
             "from_addr": "receipts@stripe.com",
             "subject": "Payment receipt",
             "date": "Feb 10 12:00",
+            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
             "to": "ops@puretensor.ai",
             "body": "Payment.",
         }
@@ -276,6 +301,7 @@ class TestDeduplication:
             "from_addr": "billing@provider.com",
             "subject": "Your invoice",
             "date": "Feb 10 12:00",
+            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
             "to": "ops@puretensor.ai",
             "body": "Invoice attached.",
         }
@@ -354,6 +380,7 @@ class TestNotificationFormatting:
             "from_addr": "security@bank.com",
             "subject": "Activity alert",
             "date": "Feb 10 14:30",
+            "date_raw": "Tue, 03 Mar 2026 14:30:00 +0000",
             "to": "ops@puretensor.ai",
             "body": "Unusual login detected from a new device.",
         }
@@ -377,6 +404,7 @@ class TestNotificationFormatting:
             "from_addr": "billing@provider.com",
             "subject": "Invoice",
             "date": "Feb 10 12:00",
+            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
             "to": "ops@puretensor.ai",
             "body": "Invoice attached.",
         }
@@ -384,3 +412,143 @@ class TestNotificationFormatting:
         with patch("channels.email_in.fetch_new_emails", return_value=[fake_email]):
             # Should not raise even with no bot
             await channel._poll_once()
+
+
+# ---------------------------------------------------------------------------
+# Email chat ID helper
+# ---------------------------------------------------------------------------
+
+
+class TestEmailChatId:
+
+    def test_deterministic(self):
+        """Same email should always produce the same chat ID."""
+        id1 = _email_chat_id("user@example.com")
+        id2 = _email_chat_id("user@example.com")
+        assert id1 == id2
+
+    def test_case_insensitive(self):
+        """Email addresses are case-insensitive."""
+        assert _email_chat_id("User@Example.COM") == _email_chat_id("user@example.com")
+
+    def test_offset_applied(self):
+        """Chat ID should be above the EMAIL_CHAT_ID_OFFSET."""
+        cid = _email_chat_id("test@test.com")
+        assert cid >= EMAIL_CHAT_ID_OFFSET
+
+    def test_different_senders_different_ids(self):
+        """Different senders should (almost certainly) get different IDs."""
+        id1 = _email_chat_id("alice@example.com")
+        id2 = _email_chat_id("bob@example.com")
+        assert id1 != id2
+
+
+# ---------------------------------------------------------------------------
+# Session persistence via auto_reply
+# ---------------------------------------------------------------------------
+
+
+class TestEmailSessions:
+
+    @pytest.mark.asyncio
+    async def test_auto_reply_creates_session(self, accounts_file, monkeypatch):
+        """After a successful auto-reply, a session should be persisted for the sender."""
+        monkeypatch.setattr("drafts.classifier.VIP_SENDERS",
+                            ["vip-user@example.com", "ops@puretensor.ai"])
+
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock()
+
+        channel = EmailInputChannel(bot=mock_bot)
+
+        fake_email = {
+            "id": "msg-session-1",
+            "from": "VIP User <vip-user@example.com>",
+            "from_addr": "vip-user@example.com",
+            "subject": "Quick question",
+            "date": "Mar 02 10:00",
+            "date_raw": "Tue, 03 Mar 2026 10:00:00 +0000",
+            "to": "hal@example.com",
+            "body": "Hey HAL, what's the cluster status?",
+        }
+
+        mock_run = MagicMock()
+        mock_run.returncode = 0
+
+        mock_streaming = AsyncMock(return_value={
+            "result": "All systems nominal. The cluster is healthy.",
+            "session_id": "sess-email-alan-001",
+            "written_files": [],
+        })
+
+        with patch("channels.email_in.fetch_new_emails", return_value=[fake_email]), \
+             patch("engine.call_streaming", mock_streaming), \
+             patch("subprocess.run", return_value=mock_run):
+            await channel._poll_once()
+
+        # Verify session was persisted
+        chat_id = _email_chat_id("vip-user@example.com")
+        session = get_session(chat_id)
+        assert session is not None
+        assert session["session_id"] == "sess-email-alan-001"
+        assert session["message_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_auto_reply_resumes_session(self, accounts_file, monkeypatch):
+        """Second email from same sender should pass existing session_id to call_streaming."""
+        monkeypatch.setattr("drafts.classifier.VIP_SENDERS",
+                            ["vip-user@example.com", "ops@puretensor.ai"])
+
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock()
+
+        channel = EmailInputChannel(bot=mock_bot)
+
+        fake_email_1 = {
+            "id": "msg-resume-1",
+            "from": "ops@puretensor.ai",
+            "from_addr": "ops@puretensor.ai",
+            "subject": "First question",
+            "date": "Mar 02 10:00",
+            "date_raw": "Tue, 03 Mar 2026 10:00:00 +0000",
+            "to": "hal@example.com",
+            "body": "How's the GPU utilisation?",
+        }
+        fake_email_2 = {
+            "id": "msg-resume-2",
+            "from": "ops@puretensor.ai",
+            "from_addr": "ops@puretensor.ai",
+            "subject": "Follow-up",
+            "date": "Mar 02 10:05",
+            "date_raw": "Tue, 03 Mar 2026 10:05:00 +0000",
+            "to": "hal@example.com",
+            "body": "And what about memory usage?",
+        }
+
+        mock_run = MagicMock()
+        mock_run.returncode = 0
+
+        # First call returns a new session
+        mock_streaming = AsyncMock(side_effect=[
+            {"result": "GPU at 45%.", "session_id": "sess-ops-001", "written_files": []},
+            {"result": "Memory at 60%.", "session_id": "sess-ops-001", "written_files": []},
+        ])
+
+        with patch("engine.call_streaming", mock_streaming), \
+             patch("subprocess.run", return_value=mock_run):
+            # First email
+            with patch("channels.email_in.fetch_new_emails", return_value=[fake_email_1]):
+                await channel._poll_once()
+            # Second email
+            with patch("channels.email_in.fetch_new_emails", return_value=[fake_email_2]):
+                await channel._poll_once()
+
+        # Second call should have received the session_id from first call
+        assert mock_streaming.call_count == 2
+        second_call_args = mock_streaming.call_args_list[1]
+        assert second_call_args[0][1] == "sess-ops-001"  # session_id positional arg
+
+        # Session should show 2 messages
+        chat_id = _email_chat_id("ops@puretensor.ai")
+        session = get_session(chat_id)
+        assert session["message_count"] == 2

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 with patch.dict("os.environ", {
     "TELEGRAM_BOT_TOKEN": "fake:token",
     "AUTHORIZED_USER_ID": "12345",
+    "VIP_SENDERS": "vip-user@example.com,ops@puretensor.ai,vip-user@example.com",
 }):
     from channels.email_in import (
         EmailInputChannel,
@@ -128,13 +129,14 @@ class TestEmailInputChannel:
     @pytest.mark.asyncio
     async def test_poll_once_classifies_and_notifies(self, tmp_path, monkeypatch):
         """Emails classified as 'notify' should send a Telegram message."""
-        # Write fake accounts file
+        # Write fake accounts file with primary role
         accounts_file = tmp_path / "accounts.json"
         accounts_file.write_text(json.dumps([{
             "name": "test",
             "server": "imap.test.com",
             "username": "user@test.com",
             "password": "pass",
+            "role": "primary",
         }]))
         monkeypatch.setattr("channels.email_in.ACCOUNTS_FILE", accounts_file)
 
@@ -145,6 +147,7 @@ class TestEmailInputChannel:
             "from_addr": "random@company.com",
             "subject": "Meeting next week",
             "date": "Feb 10 14:00",
+            "date_raw": "Tue, 03 Mar 2026 14:00:00 +0000",
             "to": "user@test.com",
             "body": "Hi, can we schedule a meeting?",
         }
@@ -153,7 +156,7 @@ class TestEmailInputChannel:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
-        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc: [fake_email])
+        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc, role="monitor": [fake_email])
 
         await channel._poll_once()
 
@@ -171,6 +174,7 @@ class TestEmailInputChannel:
             "server": "imap.test.com",
             "username": "user@test.com",
             "password": "pass",
+            "role": "primary",
         }]))
         monkeypatch.setattr("channels.email_in.ACCOUNTS_FILE", accounts_file)
 
@@ -180,6 +184,7 @@ class TestEmailInputChannel:
             "from_addr": "person@company.com",
             "subject": "Old message",
             "date": "Feb 10 10:00",
+            "date_raw": "Mon, 10 Feb 2026 10:00:00 +0000",
             "to": "user@test.com",
             "body": "Old content",
         }
@@ -192,7 +197,7 @@ class TestEmailInputChannel:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
-        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc: [fake_email])
+        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc, role="monitor": [fake_email])
 
         await channel._poll_once()
 
@@ -208,6 +213,7 @@ class TestEmailInputChannel:
             "server": "imap.test.com",
             "username": "user@test.com",
             "password": "pass",
+            "role": "primary",
         }]))
         monkeypatch.setattr("channels.email_in.ACCOUNTS_FILE", accounts_file)
 
@@ -217,6 +223,7 @@ class TestEmailInputChannel:
             "from_addr": "noreply@spammer.com",
             "subject": "Buy our stuff",
             "date": "Feb 10 12:00",
+            "date_raw": "Tue, 03 Mar 2026 12:00:00 +0000",
             "to": "user@test.com",
             "body": "Spam content",
         }
@@ -225,7 +232,7 @@ class TestEmailInputChannel:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
-        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc: [fake_email])
+        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc, role="monitor": [fake_email])
 
         await channel._poll_once()
 
@@ -233,14 +240,18 @@ class TestEmailInputChannel:
         bot.send_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_poll_once_auto_reply_creates_draft(self, tmp_path, monkeypatch):
-        """Emails from VIP senders should trigger Claude draft creation."""
+    async def test_poll_once_auto_reply_sends_directly(self, tmp_path, monkeypatch):
+        """Emails from VIP senders should use call_streaming and send reply directly."""
+        monkeypatch.setattr("drafts.classifier.VIP_SENDERS",
+                            ["vip-user@example.com", "ops@puretensor.ai"])
+
         accounts_file = tmp_path / "accounts.json"
         accounts_file.write_text(json.dumps([{
             "name": "test",
             "server": "imap.test.com",
             "username": "user@test.com",
             "password": "pass",
+            "role": "primary",
         }]))
         monkeypatch.setattr("channels.email_in.ACCOUNTS_FILE", accounts_file)
         monkeypatch.setattr("drafts.queue.AUTHORIZED_USER_ID", 12345)
@@ -251,6 +262,7 @@ class TestEmailInputChannel:
             "from_addr": "vip-user@example.com",
             "subject": "Report feedback",
             "date": "Feb 10 09:00",
+            "date_raw": "Tue, 03 Mar 2026 09:00:00 +0000",
             "to": "hal@example.com",
             "body": "Hi PureClaw, the latest report was excellent. Can you update the analysis?",
         }
@@ -259,17 +271,26 @@ class TestEmailInputChannel:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
-        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc: [fake_email])
+        monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc, role="monitor": [fake_email])
 
-        # Mock call_sync (used by _create_auto_reply) to return a draft
-        with patch("engine.call_sync", return_value={"result": "Thank you for the feedback, Alan."}):
+        mock_run = MagicMock()
+        mock_run.returncode = 0
+
+        mock_streaming = AsyncMock(return_value={
+            "result": "Thank you for the feedback, Alan.",
+            "session_id": "sess-vip-001",
+            "written_files": [],
+        })
+
+        with patch("engine.call_streaming", mock_streaming), \
+             patch("subprocess.run", return_value=mock_run):
             await channel._poll_once()
 
-        # Should have called bot.send_message with approval buttons (from create_email_draft)
+        # Should have sent a [SENT] notification via Telegram
         bot.send_message.assert_called_once()
         call_kwargs = bot.send_message.call_args[1]
         assert "vip-user@example.com" in call_kwargs["text"]
-        assert call_kwargs["reply_markup"] is not None
+        assert "[SENT]" in call_kwargs["text"]
 
 
 # ---------------------------------------------------------------------------
