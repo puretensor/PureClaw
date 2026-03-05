@@ -23,7 +23,7 @@ from observers.base import Observer, ObserverResult
 log = logging.getLogger("nexus")
 
 # SSH to tensor-core
-TC_SSH = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 puretensorai@REDACTED_IP"
+TC_SSH = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 puretensorai@localhost"
 
 # Repos to auto-sync — path on TC, GitHub remote name, whether public
 REPOS = [
