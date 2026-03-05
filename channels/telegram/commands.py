@@ -70,9 +70,15 @@ from db import list_active_followups, resolve_followup
 GCALENDAR_SCRIPT = Path.home() / ".config" / "puretensor" / "gcalendar.py"
 
 try:
-    from memory import add_memory, remove_memory, list_memories, search_memories, memory_count
+    from memory import (
+        save_memory, add_memory, remove_memory,
+        list_memories, search_memories, memory_count,
+        get_memories_for_injection, read_topic_file, list_topic_files,
+    )
 except ImportError:
-    add_memory = remove_memory = list_memories = search_memories = memory_count = None
+    save_memory = add_memory = remove_memory = None
+    list_memories = search_memories = memory_count = None
+    get_memories_for_injection = read_topic_file = list_topic_files = None
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +666,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_remember(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /remember <fact> — store a persistent memory."""
-    if add_memory is None:
+    if save_memory is None:
         await update.message.reply_text("Memory module not available.")
         return
 
@@ -671,33 +677,31 @@ async def cmd_remember(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Examples:\n"
             "/remember prefer dark mode for all UIs\n"
             "/remember tensor-core has 512GB RAM\n"
-            "/remember --people Alan is CTO of Bretalon\n\n"
-            "Categories: --preferences, --infrastructure, --people, --projects"
+            "/remember --infrastructure arx1 has 3 HDDs\n\n"
+            "Topics: --infrastructure, --lessons, --people, --projects"
         )
         return
 
-    # Check for category flag
-    category = "general"
+    # Check for topic flag
+    topic = None
     text_args = list(args)
     if text_args[0].startswith("--"):
-        cat_flag = text_args.pop(0).lstrip("-").lower()
-        valid_cats = ("preferences", "infrastructure", "people", "projects", "general")
-        if cat_flag in valid_cats:
-            category = cat_flag
+        topic = text_args.pop(0).lstrip("-").lower()
 
     if not text_args:
         await update.message.reply_text("Need a fact to remember.")
         return
 
     text = " ".join(text_args)
-    key = add_memory(text, category)
+    save_memory(text, topic=topic)
     count = memory_count()
-    await update.message.reply_text(f"Remembered [{category}]: {text}\nKey: {key} ({count} total memories)")
+    dest = f"topic '{topic}'" if topic else "MEMORY.md"
+    await update.message.reply_text(f"Remembered in {dest}: {text}\n({count} main entries)")
 
 
 @authorized
 async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /forget <key-or-number> — remove a memory."""
+    """Handle /forget <number-or-text> — remove a memory from MEMORY.md."""
     if remove_memory is None:
         await update.message.reply_text("Memory module not available.")
         return
@@ -705,67 +709,84 @@ async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if not args:
         await update.message.reply_text(
-            "Usage: /forget <key>\n"
-            "Use /memories to see keys."
+            "Usage: /forget <number or text>\n"
+            "Use /memories to see the numbered list."
         )
         return
 
-    key = args[0]
+    arg = " ".join(args)
 
     # Support forgetting by number from the /memories list
     try:
-        n = int(key)
-        mems = list_memories()
-        if 1 <= n <= len(mems):
-            key = mems[n - 1]["key"]
-        else:
-            await update.message.reply_text(f"Invalid number. Use /memories to see list (1-{len(mems)}).")
-            return
+        n = int(arg)
+        removed = remove_memory(n)
     except ValueError:
-        pass  # Not a number, treat as key
+        removed = remove_memory(arg)
 
-    removed = remove_memory(key)
     if removed:
-        await update.message.reply_text(f"Forgot: {key}")
+        await update.message.reply_text(f"Forgot: {arg}")
     else:
-        await update.message.reply_text(f"Memory not found: {key}")
+        await update.message.reply_text(f"Memory not found: {arg}")
 
 
 @authorized
 async def cmd_memories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /memories [category|search term] — list stored memories."""
+    """Handle /memories [topic|search term] — list stored memories."""
     if list_memories is None:
         await update.message.reply_text("Memory module not available.")
         return
 
     args = context.args or []
 
-    valid_cats = ("preferences", "infrastructure", "people", "projects", "general")
-
-    if args and args[0].lower() in valid_cats:
-        # Filter by category
-        category = args[0].lower()
-        mems = list_memories(category=category)
-        header = f"Memories [{category}]:"
-    elif args:
-        # Search
-        query = " ".join(args)
-        mems = search_memories(query)
-        header = f"Memories matching \"{query}\":"
-    else:
+    if not args:
+        # Show MEMORY.md content + topic file listing
         mems = list_memories()
-        header = "All memories:"
+        lines = [f"MEMORY.md ({len(mems)} entries):"]
+        for i, m in enumerate(mems, 1):
+            lines.append(f"{i}. {m['text']}")
 
-    if not mems:
-        await update.message.reply_text("No memories found.")
-        return
+        if list_topic_files:
+            topics = list_topic_files()
+            if topics:
+                lines.append("")
+                lines.append("Topic files:")
+                for t in topics:
+                    size_kb = t["size"] / 1024
+                    lines.append(f"  {t['name']}.md ({size_kb:.1f} KB)")
 
-    lines = [header]
-    for i, m in enumerate(mems, 1):
-        cat_tag = f"[{m['category']}]" if m.get('category') else ""
-        lines.append(f"{i}. {cat_tag} {m['text']} ({m['key']})")
+        if len(mems) == 0 and (not list_topic_files or not list_topic_files()):
+            await update.message.reply_text("No memories stored.")
+            return
 
-    text = "\n".join(lines)
+        text = "\n".join(lines)
+    elif read_topic_file and len(args) == 1:
+        # Could be a topic name or a search term — check if topic file exists
+        topic_content = read_topic_file(args[0])
+        if topic_content:
+            text = topic_content
+        else:
+            # Fall back to search
+            query = " ".join(args)
+            results = search_memories(query)
+            if not results:
+                await update.message.reply_text(f"No memories matching \"{query}\".")
+                return
+            lines = [f"Search results for \"{query}\":"]
+            for r in results:
+                lines.append(f"  [{r['source']}] {r['text']}")
+            text = "\n".join(lines)
+    else:
+        # Multi-word search
+        query = " ".join(args)
+        results = search_memories(query)
+        if not results:
+            await update.message.reply_text(f"No memories matching \"{query}\".")
+            return
+        lines = [f"Search results for \"{query}\":"]
+        for r in results:
+            lines.append(f"  [{r['source']}] {r['text']}")
+        text = "\n".join(lines)
+
     if len(text) > 4000:
         text = text[:3997] + "..."
     await update.message.reply_text(text)

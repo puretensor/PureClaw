@@ -134,7 +134,7 @@ class MemorySyncObserver(Observer):
         """Compose HAL's activity digest and push to tensor-core."""
         from config import AUTHORIZED_USER_ID
         from db import list_sessions
-        from memory import list_memories
+        from memory import get_memories_for_injection, list_topic_files
 
         now = datetime.now(timezone.utc)
         now_str = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -168,15 +168,25 @@ class MemorySyncObserver(Observer):
         except Exception as exc:
             log.warning("[memory_sync] Push: failed to query sessions: %s", exc)
 
-        # HAL memories
+        # HAL memories (from MEMORY.md)
         try:
-            memories = list_memories()
-            if memories:
+            mem_content = get_memories_for_injection()
+            if mem_content:
                 lines.append("## HAL Memories")
-                for mem in memories[:15]:  # Cap at 15
-                    cat = mem.get("category", "general")
-                    text = mem.get("text", "")
-                    lines.append(f"- {cat}: {text}")
+                # Strip the injection header, include raw MEMORY.md content
+                for line in mem_content.splitlines():
+                    if line.startswith("[") and "Memory]" in line:
+                        continue  # Skip injection header
+                    lines.append(line)
+                lines.append("")
+
+            # List topic files
+            topics = list_topic_files()
+            if topics:
+                lines.append("## HAL Topic Files")
+                for t in topics:
+                    size_kb = t["size"] / 1024
+                    lines.append(f"- {t['name']}.md ({size_kb:.1f} KB)")
                 lines.append("")
         except Exception as exc:
             log.warning("[memory_sync] Push: failed to query memories: %s", exc)

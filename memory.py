@@ -1,10 +1,26 @@
-"""Persistent memory layer for PureClaw — file-based JSON store at ~/.hal/memory.json."""
+"""Persistent memory layer for PureClaw — markdown-based file store at /data/hal/memory/.
+
+Mirrors Claude Code's architecture: MEMORY.md (main index, ≤200 lines) plus
+topic files (freeform markdown, ≤50KB each).  Replaces the old flat JSON store.
+
+Public API:
+  save_memory(text, topic=None)      — append to MEMORY.md or topic file
+  update_memory(old_text, new_text, topic=None) — find-and-replace
+  remove_memory(text_or_index)       — remove matching line from MEMORY.md
+  list_memories()                    — parse MEMORY.md bullet lines
+  list_topic_files()                 — list *.md topic files
+  read_topic_file(name)              — read a topic file
+  search_memories(query)             — search across all memory files
+  get_memories_for_injection()       — MEMORY.md content for prompt injection
+  get_shared_context()               — synced PureClaw MEMORY.md (read-only)
+  memory_count()                     — count bullet lines in MEMORY.md
+  add_memory(text, category)         — compat shim → save_memory()
+"""
 
 import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 from config import log, AGENT_NAME
@@ -13,175 +29,313 @@ from config import log, AGENT_NAME
 # Config
 # ---------------------------------------------------------------------------
 
-MEMORY_PATH = Path(os.environ.get("MEMORY_PATH", os.path.expanduser("~/.hal/memory.json")))
+MEMORY_DIR = Path(os.environ.get("MEMORY_DIR", "/data/hal/memory"))
+MEMORY_MD = MEMORY_DIR / "MEMORY.md"
+SHARED_CONTEXT_PATH = Path(os.environ.get(
+    "SHARED_CONTEXT_PATH", "/data/sync/pureclaw_memory.md"
+))
 
-VALID_CATEGORIES = {"preferences", "infrastructure", "people", "projects", "general"}
+MAX_MEMORY_LINES = 200
+MAX_TOPIC_FILE_SIZE = 50 * 1024  # 50KB
 
-_EMPTY_STORE = {"version": 1, "memories": {}}
+# Legacy path for migration
+_LEGACY_JSON_PATH = Path(os.environ.get(
+    "MEMORY_PATH", os.path.expanduser("~/.hal/memory.json")
+))
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load() -> dict:
-    """Read and parse the JSON memory file.
+def _ensure_dir():
+    """Create memory directory if needed."""
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
-    Returns the empty structure if the file doesn't exist or contains
-    corrupt JSON (logs a warning in the latter case).
-    """
-    if not MEMORY_PATH.exists():
-        return json.loads(json.dumps(_EMPTY_STORE))  # deep copy
+
+def _atomic_write(path: Path, content: str):
+    """Write file atomically via tmp+rename."""
+    _ensure_dir()
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _read_md(path: Path) -> str:
+    """Read a markdown file, returning empty string if missing."""
+    if not path.exists():
+        return ""
     try:
-        data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or "memories" not in data:
-            log.warning("memory.json has unexpected structure — resetting")
-            return json.loads(json.dumps(_EMPTY_STORE))
-        return data
-    except (json.JSONDecodeError, ValueError) as exc:
-        log.warning("Corrupt memory.json (%s) — returning empty store", exc)
-        return json.loads(json.dumps(_EMPTY_STORE))
+        return path.read_text(encoding="utf-8")
+    except Exception as exc:
+        log.warning("Failed to read %s: %s", path, exc)
+        return ""
 
 
-def _save(data: dict) -> None:
-    """Write the JSON file atomically (write to .tmp then rename)."""
-    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = MEMORY_PATH.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp_path.replace(MEMORY_PATH)
+def _bullet_lines(content: str) -> list[str]:
+    """Extract lines starting with '- ' from markdown content."""
+    return [line for line in content.splitlines() if line.startswith("- ")]
 
 
-def _slugify(text: str) -> str:
-    """Convert text to a URL-safe slug key.
-
-    Lowercase, replace spaces/special chars with hyphens, strip leading/
-    trailing hyphens, collapse multiple hyphens.  Truncate to 60 chars.
-    """
-    slug = text.lower()
-    # Replace any non-alphanumeric character (except hyphens) with a hyphen
-    slug = re.sub(r"[^a-z0-9-]+", "-", slug)
-    # Collapse multiple hyphens
-    slug = re.sub(r"-{2,}", "-", slug)
-    # Strip leading/trailing hyphens
-    slug = slug.strip("-")
-    # Truncate to 60 chars (don't break mid-hyphen)
-    if len(slug) > 60:
-        slug = slug[:60].rstrip("-")
-    return slug
+def _sanitize_topic(name: str) -> str:
+    """Sanitize topic name to a safe filename."""
+    name = re.sub(r"[^a-z0-9_-]", "", name.lower().strip())
+    if not name:
+        name = "general"
+    if not name.endswith(".md"):
+        name += ".md"
+    return name
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# ---------------------------------------------------------------------------
+# Migration (idempotent — runs on first import)
+# ---------------------------------------------------------------------------
+
+def _migrate_from_json():
+    """Convert legacy memory.json to MEMORY.md if needed."""
+    if MEMORY_MD.exists():
+        return  # Already migrated
+    if not _LEGACY_JSON_PATH.exists():
+        return  # Nothing to migrate
+
+    try:
+        data = json.loads(_LEGACY_JSON_PATH.read_text(encoding="utf-8"))
+        memories = data.get("memories", {})
+        if not memories:
+            return
+
+        lines = ["# HAL Memory", ""]
+        for mem in memories.values():
+            text = mem.get("text", "")
+            cat = mem.get("category", "general")
+            if text:
+                lines.append(f"- [{cat}] {text}")
+
+        _ensure_dir()
+        _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
+
+        # Rename old file (preserve, don't delete)
+        migrated = _LEGACY_JSON_PATH.with_suffix(".json.migrated")
+        _LEGACY_JSON_PATH.rename(migrated)
+        log.info("Migrated %d memories from JSON to MEMORY.md", len(memories))
+    except Exception as exc:
+        log.warning("Migration from memory.json failed: %s", exc)
+
+
+# Run migration on import
+_migrate_from_json()
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def add_memory(text: str, category: str = "general") -> str:
-    """Add a memory (or update if the same slug already exists).
+def save_memory(text: str, topic: str | None = None) -> str:
+    """Append a bullet line to MEMORY.md or a topic file.
 
-    Returns the key.  Invalid categories silently default to "general".
+    Returns the text that was saved.
     """
-    if category not in VALID_CATEGORIES:
-        category = "general"
+    text = text.strip()
+    if not text:
+        return ""
 
-    key = _slugify(text)
-    if not key:
-        key = "unnamed"
+    if topic:
+        filename = _sanitize_topic(topic)
+        path = MEMORY_DIR / filename
+        existing = _read_md(path)
 
-    data = _load()
-    now = _now()
+        # Check size limit
+        if len(existing.encode("utf-8")) >= MAX_TOPIC_FILE_SIZE:
+            log.warning("Topic file %s exceeds %d bytes, not appending", filename, MAX_TOPIC_FILE_SIZE)
+            return text
 
-    if key in data["memories"]:
-        data["memories"][key]["text"] = text
-        data["memories"][key]["category"] = category
-        data["memories"][key]["updated_at"] = now
+        if not existing:
+            content = f"# {topic.title()}\n\n- {text}\n"
+        else:
+            content = existing.rstrip("\n") + f"\n- {text}\n"
+
+        _atomic_write(path, content)
     else:
-        data["memories"][key] = {
-            "key": key,
-            "text": text,
-            "category": category,
-            "created_at": now,
-            "updated_at": now,
-        }
+        existing = _read_md(MEMORY_MD)
+        if not existing:
+            content = f"# HAL Memory\n\n- {text}\n"
+        else:
+            content = existing.rstrip("\n") + f"\n- {text}\n"
 
-    _save(data)
-    return key
+        line_count = len(content.splitlines())
+        if line_count > MAX_MEMORY_LINES:
+            log.warning("MEMORY.md has %d lines (limit %d)", line_count, MAX_MEMORY_LINES)
+
+        _atomic_write(MEMORY_MD, content)
+
+    return text
 
 
-def remove_memory(key: str) -> bool:
-    """Remove a memory by key.  Returns True if it existed."""
-    data = _load()
-    if key in data["memories"]:
-        del data["memories"][key]
-        _save(data)
-        return True
+def update_memory(old_text: str, new_text: str, topic: str | None = None) -> bool:
+    """Find-and-replace text in MEMORY.md or a topic file. Returns True if replaced."""
+    if not old_text or not new_text:
+        return False
+
+    if topic:
+        path = MEMORY_DIR / _sanitize_topic(topic)
+    else:
+        path = MEMORY_MD
+
+    content = _read_md(path)
+    if not content or old_text not in content:
+        return False
+
+    updated = content.replace(old_text, new_text, 1)
+    _atomic_write(path, updated)
+    return True
+
+
+def remove_memory(text_or_index) -> bool:
+    """Remove a matching line from MEMORY.md.
+
+    Accepts either:
+    - A string: removes first line containing that text
+    - An int: removes the Nth bullet line (1-indexed)
+
+    Returns True if a line was removed.
+    """
+    content = _read_md(MEMORY_MD)
+    if not content:
+        return False
+
+    lines = content.splitlines()
+
+    if isinstance(text_or_index, int):
+        bullets = [(i, line) for i, line in enumerate(lines) if line.startswith("- ")]
+        idx = text_or_index - 1  # 1-indexed
+        if 0 <= idx < len(bullets):
+            line_idx = bullets[idx][0]
+            lines.pop(line_idx)
+            _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
+            return True
+        return False
+
+    # String match — find first line containing the text
+    text = str(text_or_index)
+    for i, line in enumerate(lines):
+        if text in line:
+            lines.pop(i)
+            _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
+            return True
     return False
 
 
-def list_memories(category: str | None = None) -> list[dict]:
-    """List all memories, optionally filtered by category.
+def list_memories() -> list[dict]:
+    """Parse MEMORY.md bullet lines into a list of dicts.
 
-    Returns a list sorted by updated_at descending.
+    Returns: [{"text": "...", "line_num": N}, ...]
     """
-    data = _load()
-    memories = list(data["memories"].values())
+    content = _read_md(MEMORY_MD)
+    if not content:
+        return []
 
-    if category is not None:
-        memories = [m for m in memories if m.get("category") == category]
+    result = []
+    for i, line in enumerate(content.splitlines(), 1):
+        if line.startswith("- "):
+            result.append({"text": line[2:], "line_num": i})
+    return result
 
-    memories.sort(key=lambda m: m.get("updated_at", ""), reverse=True)
-    return memories
+
+def list_topic_files() -> list[dict]:
+    """List topic files in MEMORY_DIR (excluding MEMORY.md).
+
+    Returns: [{"name": "...", "size": N}, ...]
+    """
+    if not MEMORY_DIR.exists():
+        return []
+
+    result = []
+    for f in sorted(MEMORY_DIR.glob("*.md")):
+        if f.name == "MEMORY.md":
+            continue
+        result.append({
+            "name": f.stem,
+            "size": f.stat().st_size,
+        })
+    return result
+
+
+def read_topic_file(name: str) -> str:
+    """Read a specific topic file's content."""
+    filename = _sanitize_topic(name)
+    path = MEMORY_DIR / filename
+    return _read_md(path)
 
 
 def search_memories(query: str) -> list[dict]:
-    """Case-insensitive substring search across key and text fields."""
-    data = _load()
+    """Case-insensitive search across MEMORY.md and all topic files.
+
+    Returns: [{"text": "...", "source": "MEMORY.md" or topic name}, ...]
+    """
+    if not query:
+        return []
+
     q = query.lower()
     results = []
-    for mem in data["memories"].values():
-        if q in mem.get("key", "").lower() or q in mem.get("text", "").lower():
-            results.append(mem)
-    results.sort(key=lambda m: m.get("updated_at", ""), reverse=True)
+
+    # Search MEMORY.md
+    content = _read_md(MEMORY_MD)
+    for line in content.splitlines():
+        if q in line.lower():
+            results.append({"text": line, "source": "MEMORY.md"})
+
+    # Search topic files
+    if MEMORY_DIR.exists():
+        for f in MEMORY_DIR.glob("*.md"):
+            if f.name == "MEMORY.md":
+                continue
+            topic_content = _read_md(f)
+            for line in topic_content.splitlines():
+                if q in line.lower():
+                    results.append({"text": line, "source": f.stem})
+
     return results
 
 
-def get_memories_for_injection(limit: int = 10) -> str:
-    """Return a formatted string of the most recent N memories for prompt injection.
-
-    Format:
-        [PureClaw Memory]
-        - category: text
-        - category: text
-        ...
+def get_memories_for_injection() -> str:
+    """Return MEMORY.md content (capped at MAX_MEMORY_LINES) for prompt injection.
 
     Returns empty string if no memories.
     """
-    memories = list_memories()[:limit]
-    if not memories:
+    content = _read_md(MEMORY_MD)
+    if not content.strip():
         return ""
 
-    lines = [f"[{AGENT_NAME} Memory]"]
-    for mem in memories:
-        lines.append(f"- {mem['category']}: {mem['text']}")
-    return "\n".join(lines)
+    lines = content.splitlines()
+    if len(lines) > MAX_MEMORY_LINES:
+        lines = lines[:MAX_MEMORY_LINES]
+        lines.append(f"\n... (truncated at {MAX_MEMORY_LINES} lines)")
+
+    return f"[{AGENT_NAME} Memory]\n" + "\n".join(lines)
 
 
 def memory_count() -> int:
-    """Return total number of stored memories."""
-    data = _load()
-    return len(data["memories"])
+    """Return number of bullet lines in MEMORY.md."""
+    content = _read_md(MEMORY_MD)
+    return len(_bullet_lines(content))
+
+
+# ---------------------------------------------------------------------------
+# Backward compatibility shim
+# ---------------------------------------------------------------------------
+
+def add_memory(text: str, category: str = "general") -> str:
+    """Compat shim for /remember command. Maps to save_memory().
+
+    Returns the saved text (old API returned a key, but callers only use it for display).
+    """
+    topic = category if category != "general" else None
+    return save_memory(text, topic=topic)
 
 
 # ---------------------------------------------------------------------------
 # Shared context (PureClaw ↔ HAL sync)
 # ---------------------------------------------------------------------------
-
-SHARED_CONTEXT_PATH = Path(os.environ.get(
-    "SHARED_CONTEXT_PATH", "/data/sync/pureclaw_memory.md"
-))
-
 
 def get_shared_context() -> str:
     """Read the synced PureClaw MEMORY.md for injection into HAL's prompt."""

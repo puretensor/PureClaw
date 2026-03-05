@@ -424,6 +424,46 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": "Write to persistent memory. Appends a bullet entry to MEMORY.md or a topic file. Use for facts, preferences, lessons, and anything worth remembering across sessions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "The memory text to save"},
+                    "topic": {"type": "string", "description": "Optional topic file (e.g. 'infrastructure', 'lessons'). Omit to write to main MEMORY.md."},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_memory",
+            "description": "Read from persistent memory. With no args returns MEMORY.md. With topic returns that topic file. With query searches across all memory files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Topic file to read (e.g. 'infrastructure')"},
+                    "query": {"type": "string", "description": "Search query — searches across MEMORY.md and all topic files"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_memory",
+            "description": "List all memory files and their sizes. Shows MEMORY.md entry count and all topic files.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
 ]
 
 
@@ -1073,6 +1113,64 @@ def _exec_list_tasks(args: dict, **_kwargs) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Memory executors
+# ---------------------------------------------------------------------------
+
+
+def _exec_save_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
+    """Save a memory entry."""
+    from memory import save_memory
+    text = args.get("text", "").strip()
+    if not text:
+        return "Error: no text provided", []
+    topic = args.get("topic")
+    saved = save_memory(text, topic=topic)
+    dest = f"topic '{topic}'" if topic else "MEMORY.md"
+    return f"Saved to {dest}: {saved}", []
+
+
+def _exec_read_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
+    """Read from persistent memory."""
+    from memory import get_memories_for_injection, read_topic_file, search_memories
+    topic = args.get("topic")
+    query = args.get("query")
+
+    if query:
+        results = search_memories(query)
+        if not results:
+            return f"No memories matching '{query}'", []
+        lines = [f"Search results for '{query}':"]
+        for r in results:
+            lines.append(f"  [{r['source']}] {r['text']}")
+        return "\n".join(lines), []
+
+    if topic:
+        content = read_topic_file(topic)
+        if not content:
+            return f"Topic file '{topic}' not found or empty", []
+        return content, []
+
+    content = get_memories_for_injection()
+    return content or "No memories stored yet.", []
+
+
+def _exec_list_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
+    """List all memory files."""
+    from memory import memory_count, list_topic_files
+    count = memory_count()
+    topics = list_topic_files()
+    lines = [f"MEMORY.md: {count} entries"]
+    if topics:
+        lines.append(f"Topic files ({len(topics)}):")
+        for t in topics:
+            size_kb = t["size"] / 1024
+            lines.append(f"  {t['name']}.md ({size_kb:.1f} KB)")
+    else:
+        lines.append("No topic files.")
+    return "\n".join(lines), []
+
+
+# ---------------------------------------------------------------------------
 # Executor dispatch
 # ---------------------------------------------------------------------------
 
@@ -1093,6 +1191,9 @@ _EXECUTORS = {
     "create_task": _exec_create_task,
     "update_task": _exec_update_task,
     "list_tasks": _exec_list_tasks,
+    "save_memory": _exec_save_memory,
+    "read_memory": _exec_read_memory,
+    "list_memory": _exec_list_memory,
 }
 
 
@@ -1182,6 +1283,15 @@ def _format_tool_status(tool_name: str, tool_input: dict) -> str:
         return f"Updating task #{tool_input.get('task_id', '?')}"
     elif tool_name == "list_tasks":
         return f"Listing tasks ({tool_input.get('status', 'active')})"
+    elif tool_name == "save_memory":
+        topic = tool_input.get("topic", "main")
+        return f"Saving memory ({topic})"
+    elif tool_name == "read_memory":
+        if tool_input.get("query"):
+            return f"Searching memory: {tool_input['query']}"
+        return f"Reading memory ({tool_input.get('topic', 'main')})"
+    elif tool_name == "list_memory":
+        return "Listing memory files"
     return f"Tool: {tool_name}"
 
 

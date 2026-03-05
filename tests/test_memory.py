@@ -1,20 +1,21 @@
-"""Tests for memory.py — persistent memory layer (Phase 5).
+"""Tests for memory.py — markdown-based persistent memory layer.
 
 Tests cover:
-- _slugify: spaces, special chars, truncation, unicode
-- add_memory: basic add, duplicate update, categories
-- remove_memory: existing and missing keys
-- list_memories: all and by category, sort order
-- search_memories: substring match on key and text
-- get_memories_for_injection: formatted output, limit, empty
-- memory_count: correct count
-- _load: missing file, corrupt JSON
-- _save: atomic write
+- save_memory: basic append, topic files, size cap warning
+- update_memory: find-and-replace in MEMORY.md and topic files
+- remove_memory: by text match and by index
+- list_memories: bullet parsing
+- list_topic_files: enumeration
+- read_topic_file: content retrieval
+- search_memories: cross-file search
+- get_memories_for_injection: formatted output, line cap
+- memory_count: bullet count
+- add_memory: backward compat shim
+- migration: JSON → markdown
 """
 
 import json
 import sys
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,117 +28,146 @@ with patch.dict("os.environ", {
     "AUTHORIZED_USER_ID": "12345",
 }):
     from memory import (
-        add_memory,
+        save_memory,
+        update_memory,
         remove_memory,
         list_memories,
+        list_topic_files,
+        read_topic_file,
         search_memories,
         get_memories_for_injection,
         memory_count,
-        _slugify,
-        _load,
-        _save,
-        MEMORY_PATH,
+        add_memory,
+        _migrate_from_json,
+        _bullet_lines,
+        _sanitize_topic,
+        MEMORY_MD,
+        MEMORY_DIR,
+        MAX_MEMORY_LINES,
     )
     from config import AGENT_NAME
 
 
 # ---------------------------------------------------------------------------
-# Fixture — redirect MEMORY_PATH to tmp_path for every test
+# Fixture — redirect MEMORY_DIR and MEMORY_MD to tmp_path for every test
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
 def use_tmp_memory(tmp_path, monkeypatch):
-    test_path = tmp_path / "memory.json"
-    monkeypatch.setattr("memory.MEMORY_PATH", test_path)
-    yield test_path
+    mem_dir = tmp_path / "memory"
+    mem_md = mem_dir / "MEMORY.md"
+    monkeypatch.setattr("memory.MEMORY_DIR", mem_dir)
+    monkeypatch.setattr("memory.MEMORY_MD", mem_md)
+    yield mem_dir
 
 
 # ---------------------------------------------------------------------------
-# _slugify
+# _sanitize_topic
 # ---------------------------------------------------------------------------
 
-class TestSlugify:
+class TestSanitizeTopic:
 
-    def test_spaces(self):
-        assert _slugify("hello world") == "hello-world"
+    def test_basic(self):
+        assert _sanitize_topic("infrastructure") == "infrastructure.md"
+
+    def test_uppercase(self):
+        assert _sanitize_topic("LESSONS") == "lessons.md"
 
     def test_special_chars(self):
-        assert _slugify("user's #1 preference!") == "user-s-1-preference"
+        assert _sanitize_topic("my topic!") == "mytopic.md"
 
-    def test_multiple_spaces_and_special(self):
-        assert _slugify("  lots   of   spaces  ") == "lots-of-spaces"
+    def test_already_has_extension(self):
+        assert _sanitize_topic("lessons.md") == "lessonsmd.md"
 
-    def test_truncation(self):
-        long_text = "a" * 100
-        result = _slugify(long_text)
-        assert len(result) <= 60
-
-    def test_unicode(self):
-        result = _slugify("tensor-core runs Proxmox")
-        assert result == "tensor-core-runs-proxmox"
-
-    def test_unicode_non_ascii(self):
-        # Non-ASCII chars should be replaced with hyphens
-        result = _slugify("cafe\u0301 latte\u00e9")
-        assert "-" in result or result.isalnum()
-        assert len(result) <= 60
-
-    def test_empty_string(self):
-        assert _slugify("") == ""
-
-    def test_only_special_chars(self):
-        assert _slugify("!@#$%^&*()") == ""
-
-    def test_leading_trailing_hyphens_stripped(self):
-        assert _slugify("-hello-") == "hello"
-
-    def test_collapse_multiple_hyphens(self):
-        assert _slugify("foo---bar") == "foo-bar"
+    def test_empty_defaults_to_general(self):
+        assert _sanitize_topic("") == "general.md"
+        assert _sanitize_topic("!!!") == "general.md"
 
 
 # ---------------------------------------------------------------------------
-# add_memory
+# save_memory
 # ---------------------------------------------------------------------------
 
-class TestAddMemory:
+class TestSaveMemory:
 
-    def test_basic_add(self):
-        key = add_memory("User prefers concise responses")
-        assert key == "user-prefers-concise-responses"
-        assert memory_count() == 1
+    def test_basic_save(self, use_tmp_memory):
+        save_memory("User prefers dark mode")
+        mem_md = use_tmp_memory / "MEMORY.md"
+        assert mem_md.exists()
+        content = mem_md.read_text()
+        assert "- User prefers dark mode" in content
 
-    def test_returns_key(self):
-        key = add_memory("tensor-core runs Proxmox", "infrastructure")
-        assert isinstance(key, str)
-        assert len(key) > 0
+    def test_creates_header(self, use_tmp_memory):
+        save_memory("first entry")
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert content.startswith("# HAL Memory")
 
-    def test_add_memory_duplicate_updates(self):
-        key1 = add_memory("User prefers concise responses", "preferences")
-        key2 = add_memory("User prefers concise responses", "general")
-        assert key1 == key2
-        assert memory_count() == 1
-        # Category should be updated
-        memories = list_memories()
-        assert memories[0]["category"] == "general"
+    def test_appends_to_existing(self, use_tmp_memory):
+        save_memory("first")
+        save_memory("second")
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert "- first" in content
+        assert "- second" in content
+        assert content.index("- first") < content.index("- second")
 
-    def test_add_memory_valid_categories(self):
-        for cat in ("preferences", "infrastructure", "people", "projects", "general"):
-            key = add_memory(f"test {cat}", cat)
-            memories = search_memories(f"test {cat}")
-            assert memories[0]["category"] == cat
+    def test_empty_text_returns_empty(self):
+        result = save_memory("")
+        assert result == ""
 
-    def test_add_memory_invalid_category_defaults_to_general(self):
-        key = add_memory("some fact", "invalid_category")
-        memories = list_memories()
-        assert memories[0]["category"] == "general"
+    def test_strips_whitespace(self, use_tmp_memory):
+        save_memory("  padded text  ")
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert "- padded text" in content
 
-    def test_add_memory_timestamps(self):
-        key = add_memory("timestamped memory")
-        memories = list_memories()
-        mem = memories[0]
-        assert "created_at" in mem
-        assert "updated_at" in mem
-        assert mem["created_at"] == mem["updated_at"]
+    def test_returns_saved_text(self):
+        result = save_memory("hello world")
+        assert result == "hello world"
+
+
+class TestSaveMemoryTopic:
+
+    def test_creates_topic_file(self, use_tmp_memory):
+        save_memory("arx1 has 3 HDDs", topic="infrastructure")
+        topic_path = use_tmp_memory / "infrastructure.md"
+        assert topic_path.exists()
+        content = topic_path.read_text()
+        assert "- arx1 has 3 HDDs" in content
+        assert "# Infrastructure" in content
+
+    def test_appends_to_existing_topic(self, use_tmp_memory):
+        save_memory("fact one", topic="infra")
+        save_memory("fact two", topic="infra")
+        content = (use_tmp_memory / "infra.md").read_text()
+        assert "- fact one" in content
+        assert "- fact two" in content
+
+
+# ---------------------------------------------------------------------------
+# update_memory
+# ---------------------------------------------------------------------------
+
+class TestUpdateMemory:
+
+    def test_basic_update(self, use_tmp_memory):
+        save_memory("old fact")
+        assert update_memory("old fact", "new fact") is True
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert "new fact" in content
+        assert "old fact" not in content
+
+    def test_update_in_topic(self, use_tmp_memory):
+        save_memory("wrong info", topic="infra")
+        assert update_memory("wrong info", "correct info", topic="infra") is True
+        content = (use_tmp_memory / "infra.md").read_text()
+        assert "correct info" in content
+
+    def test_update_not_found(self):
+        save_memory("existing")
+        assert update_memory("nonexistent", "replacement") is False
+
+    def test_update_empty_strings(self):
+        assert update_memory("", "new") is False
+        assert update_memory("old", "") is False
 
 
 # ---------------------------------------------------------------------------
@@ -146,19 +176,40 @@ class TestAddMemory:
 
 class TestRemoveMemory:
 
-    def test_remove_existing(self):
-        key = add_memory("to be removed")
-        assert remove_memory(key) is True
-        assert memory_count() == 0
+    def test_remove_by_text(self, use_tmp_memory):
+        save_memory("keep this")
+        save_memory("remove this")
+        assert remove_memory("remove this") is True
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert "keep this" in content
+        assert "remove this" not in content
 
-    def test_remove_missing(self):
-        assert remove_memory("nonexistent-key") is False
+    def test_remove_by_index(self, use_tmp_memory):
+        save_memory("first")
+        save_memory("second")
+        save_memory("third")
+        assert remove_memory(2) is True  # removes "second"
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert "first" in content
+        assert "second" not in content
+        assert "third" in content
 
-    def test_remove_then_readd(self):
-        key = add_memory("ephemeral fact")
-        remove_memory(key)
-        key2 = add_memory("ephemeral fact")
-        assert key == key2
+    def test_remove_missing_text(self):
+        save_memory("exists")
+        assert remove_memory("nonexistent") is False
+
+    def test_remove_invalid_index(self):
+        save_memory("only one")
+        assert remove_memory(5) is False
+        assert remove_memory(0) is False
+
+    def test_remove_from_empty(self):
+        assert remove_memory("anything") is False
+
+    def test_remove_then_readd(self, use_tmp_memory):
+        save_memory("ephemeral")
+        remove_memory("ephemeral")
+        save_memory("ephemeral")
         assert memory_count() == 1
 
 
@@ -168,38 +219,75 @@ class TestRemoveMemory:
 
 class TestListMemories:
 
-    def test_returns_all(self):
-        add_memory("first")
-        add_memory("second")
-        add_memory("third")
-        assert len(list_memories()) == 3
+    def test_returns_all_bullets(self):
+        save_memory("one")
+        save_memory("two")
+        save_memory("three")
+        mems = list_memories()
+        assert len(mems) == 3
 
-    def test_sorted_by_updated_at_desc(self):
-        add_memory("old memory")
-        # Force a different timestamp by updating
-        add_memory("new memory")
-        memories = list_memories()
-        assert memories[0]["updated_at"] >= memories[-1]["updated_at"]
+    def test_dict_format(self):
+        save_memory("test entry")
+        mems = list_memories()
+        assert "text" in mems[0]
+        assert "line_num" in mems[0]
+        assert mems[0]["text"] == "test entry"
 
-    def test_list_memories_by_category(self):
-        add_memory("server config", "infrastructure")
-        add_memory("user pref", "preferences")
-        add_memory("project note", "projects")
-
-        infra = list_memories("infrastructure")
-        assert len(infra) == 1
-        assert infra[0]["category"] == "infrastructure"
-
-        prefs = list_memories("preferences")
-        assert len(prefs) == 1
-        assert prefs[0]["category"] == "preferences"
-
-    def test_list_empty_category(self):
-        add_memory("only general")
-        assert list_memories("people") == []
-
-    def test_list_no_memories(self):
+    def test_empty(self):
         assert list_memories() == []
+
+    def test_preserves_order(self):
+        save_memory("alpha")
+        save_memory("beta")
+        save_memory("gamma")
+        mems = list_memories()
+        texts = [m["text"] for m in mems]
+        assert texts == ["alpha", "beta", "gamma"]
+
+
+# ---------------------------------------------------------------------------
+# list_topic_files
+# ---------------------------------------------------------------------------
+
+class TestListTopicFiles:
+
+    def test_empty(self):
+        assert list_topic_files() == []
+
+    def test_lists_topics(self, use_tmp_memory):
+        save_memory("infra fact", topic="infrastructure")
+        save_memory("lesson", topic="lessons")
+        topics = list_topic_files()
+        names = [t["name"] for t in topics]
+        assert "infrastructure" in names
+        assert "lessons" in names
+
+    def test_excludes_memory_md(self, use_tmp_memory):
+        save_memory("main entry")  # creates MEMORY.md
+        save_memory("topic entry", topic="test")
+        topics = list_topic_files()
+        names = [t["name"] for t in topics]
+        assert "MEMORY" not in names
+
+    def test_has_size(self, use_tmp_memory):
+        save_memory("some content", topic="sized")
+        topics = list_topic_files()
+        assert topics[0]["size"] > 0
+
+
+# ---------------------------------------------------------------------------
+# read_topic_file
+# ---------------------------------------------------------------------------
+
+class TestReadTopicFile:
+
+    def test_read_existing(self, use_tmp_memory):
+        save_memory("test content", topic="mytopic")
+        content = read_topic_file("mytopic")
+        assert "test content" in content
+
+    def test_read_nonexistent(self):
+        assert read_topic_file("nonexistent") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -208,36 +296,37 @@ class TestListMemories:
 
 class TestSearchMemories:
 
-    def test_search_by_text(self):
-        add_memory("tensor-core runs Proxmox with 4 nodes", "infrastructure")
-        add_memory("User prefers concise responses", "preferences")
-
-        results = search_memories("proxmox")
+    def test_search_memory_md(self, use_tmp_memory):
+        save_memory("tensor-core has 512GB RAM")
+        save_memory("fox-n1 runs K3s")
+        results = search_memories("tensor")
         assert len(results) == 1
-        assert "Proxmox" in results[0]["text"]
+        assert "512GB" in results[0]["text"]
+        assert results[0]["source"] == "MEMORY.md"
 
-    def test_search_by_key(self):
-        add_memory("User prefers concise responses")
-        results = search_memories("concise")
+    def test_search_topic_files(self, use_tmp_memory):
+        save_memory("arx1 has HDDs", topic="infrastructure")
+        results = search_memories("arx1")
         assert len(results) == 1
+        assert results[0]["source"] == "infrastructure"
 
-    def test_search_case_insensitive(self):
-        add_memory("UPPERCASE MEMORY")
+    def test_case_insensitive(self, use_tmp_memory):
+        save_memory("UPPERCASE FACT")
         results = search_memories("uppercase")
         assert len(results) == 1
 
-    def test_search_no_match(self):
-        add_memory("something else")
-        results = search_memories("nonexistent")
-        assert len(results) == 0
+    def test_no_match(self, use_tmp_memory):
+        save_memory("something")
+        assert search_memories("nonexistent") == []
 
-    def test_search_multiple_matches(self):
-        add_memory("node health check", "infrastructure")
-        add_memory("node exporter config", "infrastructure")
-        add_memory("unrelated fact", "general")
-
+    def test_cross_file(self, use_tmp_memory):
+        save_memory("node fact in main")
+        save_memory("node fact in infra", topic="infrastructure")
         results = search_memories("node")
         assert len(results) == 2
+
+    def test_empty_query(self):
+        assert search_memories("") == []
 
 
 # ---------------------------------------------------------------------------
@@ -246,35 +335,21 @@ class TestSearchMemories:
 
 class TestGetMemoriesForInjection:
 
-    def test_formatted_output(self):
-        add_memory("User prefers concise responses", "preferences")
-        add_memory("tensor-core runs Proxmox with 4 nodes", "infrastructure")
-
+    def test_formatted_output(self, use_tmp_memory):
+        save_memory("first fact")
+        save_memory("second fact")
         output = get_memories_for_injection()
         assert output.startswith(f"[{AGENT_NAME} Memory]")
-        assert "- preferences: User prefers concise responses" in output
-        assert "- infrastructure: tensor-core runs Proxmox with 4 nodes" in output
-
-    def test_limit_respected(self):
-        for i in range(20):
-            add_memory(f"memory number {i}")
-
-        output = get_memories_for_injection(limit=5)
-        # Header + 5 memory lines
-        lines = output.strip().split("\n")
-        assert len(lines) == 6  # 1 header + 5 memories
+        assert "- first fact" in output
+        assert "- second fact" in output
 
     def test_empty_returns_empty_string(self):
-        output = get_memories_for_injection()
-        assert output == ""
+        assert get_memories_for_injection() == ""
 
-    def test_default_limit(self):
-        for i in range(15):
-            add_memory(f"item {i}")
-
+    def test_includes_header(self, use_tmp_memory):
+        save_memory("test")
         output = get_memories_for_injection()
-        lines = output.strip().split("\n")
-        assert len(lines) == 11  # 1 header + 10 (default limit)
+        assert "# HAL Memory" in output
 
 
 # ---------------------------------------------------------------------------
@@ -287,80 +362,131 @@ class TestMemoryCount:
         assert memory_count() == 0
 
     def test_after_adds(self):
-        add_memory("one")
-        add_memory("two")
-        add_memory("three")
+        save_memory("one")
+        save_memory("two")
+        save_memory("three")
         assert memory_count() == 3
 
     def test_after_remove(self):
-        key = add_memory("to remove")
-        add_memory("to keep")
-        remove_memory(key)
+        save_memory("to remove")
+        save_memory("to keep")
+        remove_memory("to remove")
         assert memory_count() == 1
 
 
 # ---------------------------------------------------------------------------
-# _load edge cases
+# Line cap warning
 # ---------------------------------------------------------------------------
 
-class TestLoadEdgeCases:
+class TestLineCap:
 
-    def test_missing_file(self, use_tmp_memory):
-        """_load returns empty structure when file doesn't exist."""
-        assert not use_tmp_memory.exists()
-        data = _load()
-        assert data == {"version": 1, "memories": {}}
+    def test_warning_on_overflow(self, use_tmp_memory, caplog):
+        import logging
+        # Create a MEMORY.md with > 200 lines
+        lines = ["# HAL Memory", ""]
+        for i in range(MAX_MEMORY_LINES):
+            lines.append(f"- entry {i}")
+        (use_tmp_memory / "MEMORY.md").parent.mkdir(parents=True, exist_ok=True)
+        (use_tmp_memory / "MEMORY.md").write_text("\n".join(lines) + "\n")
 
-    def test_corrupt_json(self, use_tmp_memory):
-        """_load returns empty structure on corrupt JSON (no crash)."""
-        use_tmp_memory.parent.mkdir(parents=True, exist_ok=True)
-        use_tmp_memory.write_text("{bad json content!!!}", encoding="utf-8")
-        data = _load()
-        assert data == {"version": 1, "memories": {}}
+        with caplog.at_level(logging.WARNING, logger="nexus"):
+            save_memory("one more entry")
 
-    def test_wrong_structure(self, use_tmp_memory):
-        """_load returns empty structure if JSON lacks 'memories' key."""
-        use_tmp_memory.parent.mkdir(parents=True, exist_ok=True)
-        use_tmp_memory.write_text('{"version": 1}', encoding="utf-8")
-        data = _load()
-        assert data == {"version": 1, "memories": {}}
-
-    def test_empty_file(self, use_tmp_memory):
-        """_load handles empty file gracefully."""
-        use_tmp_memory.parent.mkdir(parents=True, exist_ok=True)
-        use_tmp_memory.write_text("", encoding="utf-8")
-        data = _load()
-        assert data == {"version": 1, "memories": {}}
+        assert any("lines" in r.message and str(MAX_MEMORY_LINES) in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
-# _save / atomic write
+# Backward compatibility
 # ---------------------------------------------------------------------------
 
-class TestAtomicWrite:
+class TestBackwardCompat:
 
-    def test_file_exists_after_save(self, use_tmp_memory):
-        data = {"version": 1, "memories": {"test": {"key": "test", "text": "hello"}}}
-        _save(data)
-        assert use_tmp_memory.exists()
+    def test_add_memory_shim(self, use_tmp_memory):
+        result = add_memory("shim test", "general")
+        assert result == "shim test"
+        assert memory_count() == 1
 
-    def test_content_is_valid_json(self, use_tmp_memory):
-        data = {"version": 1, "memories": {"test": {"key": "test", "text": "hello"}}}
-        _save(data)
-        loaded = json.loads(use_tmp_memory.read_text(encoding="utf-8"))
-        assert loaded == data
+    def test_add_memory_with_category_creates_topic(self, use_tmp_memory):
+        add_memory("infra fact", "infrastructure")
+        topics = list_topic_files()
+        names = [t["name"] for t in topics]
+        assert "infrastructure" in names
 
-    def test_tmp_file_cleaned_up(self, use_tmp_memory):
-        """After atomic save, the .tmp file should not remain."""
-        data = {"version": 1, "memories": {}}
-        _save(data)
-        tmp_file = use_tmp_memory.with_suffix(".tmp")
-        assert not tmp_file.exists()
+    def test_add_memory_general_goes_to_main(self, use_tmp_memory):
+        add_memory("general fact", "general")
+        content = (use_tmp_memory / "MEMORY.md").read_text()
+        assert "general fact" in content
 
-    def test_creates_parent_dirs(self, tmp_path, monkeypatch):
-        """_save creates parent directories if they don't exist."""
-        deep_path = tmp_path / "a" / "b" / "c" / "memory.json"
-        monkeypatch.setattr("memory.MEMORY_PATH", deep_path)
-        data = {"version": 1, "memories": {}}
-        _save(data)
-        assert deep_path.exists()
+
+# ---------------------------------------------------------------------------
+# Migration
+# ---------------------------------------------------------------------------
+
+class TestMigration:
+
+    def test_json_to_markdown(self, tmp_path, monkeypatch):
+        mem_dir = tmp_path / "new_memory"
+        mem_md = mem_dir / "MEMORY.md"
+        legacy = tmp_path / "old_memory.json"
+
+        monkeypatch.setattr("memory.MEMORY_DIR", mem_dir)
+        monkeypatch.setattr("memory.MEMORY_MD", mem_md)
+        monkeypatch.setattr("memory._LEGACY_JSON_PATH", legacy)
+
+        # Create legacy JSON
+        data = {
+            "version": 1,
+            "memories": {
+                "key1": {"text": "first fact", "category": "general"},
+                "key2": {"text": "second fact", "category": "infrastructure"},
+            },
+        }
+        legacy.write_text(json.dumps(data), encoding="utf-8")
+
+        _migrate_from_json()
+
+        assert mem_md.exists()
+        content = mem_md.read_text()
+        assert "first fact" in content
+        assert "second fact" in content
+        assert not legacy.exists()
+        assert (tmp_path / "old_memory.json.migrated").exists()
+
+    def test_skip_if_already_migrated(self, tmp_path, monkeypatch):
+        mem_dir = tmp_path / "memory"
+        mem_md = mem_dir / "MEMORY.md"
+        legacy = tmp_path / "old.json"
+
+        monkeypatch.setattr("memory.MEMORY_DIR", mem_dir)
+        monkeypatch.setattr("memory.MEMORY_MD", mem_md)
+        monkeypatch.setattr("memory._LEGACY_JSON_PATH", legacy)
+
+        mem_dir.mkdir(parents=True)
+        mem_md.write_text("# HAL Memory\n\n- existing\n")
+        legacy.write_text('{"version":1,"memories":{"k":{"text":"old"}}}')
+
+        _migrate_from_json()
+
+        # MEMORY.md unchanged, legacy not touched
+        assert "existing" in mem_md.read_text()
+        assert legacy.exists()
+
+    def test_no_legacy_no_crash(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("memory._LEGACY_JSON_PATH", tmp_path / "nonexistent.json")
+        _migrate_from_json()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _bullet_lines
+# ---------------------------------------------------------------------------
+
+class TestBulletLines:
+
+    def test_extracts_bullets(self):
+        content = "# Header\n\n- first\n- second\nNot a bullet\n- third\n"
+        bullets = _bullet_lines(content)
+        assert len(bullets) == 3
+        assert bullets[0] == "- first"
+
+    def test_empty(self):
+        assert _bullet_lines("") == []
