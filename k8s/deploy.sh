@@ -228,6 +228,11 @@ scp "$NEXUS_DIR/k8s/deployment.yaml" "$FOX_N1:/tmp/nexus-deploy.yaml"
 scp "$NEXUS_DIR/k8s/service.yaml" "$FOX_N1:/tmp/nexus-svc.yaml"
 ssh "$FOX_N1" "kubectl apply -f /tmp/nexus-deploy.yaml && kubectl apply -f /tmp/nexus-svc.yaml"
 
+# Force pod restart — image tag may not change between deploys, so K8s
+# won't create a new pod unless we explicitly restart the rollout.
+echo "  Restarting pod to pick up new image..."
+ssh "$FOX_N1" "kubectl -n nexus rollout restart deployment/nexus"
+
 echo ""
 echo "Waiting for pod to start..."
 ssh "$FOX_N1" "kubectl -n nexus rollout status deployment/nexus --timeout=120s" || true
