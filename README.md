@@ -492,9 +492,9 @@ Background tasks that run on cron schedules inside the PureClaw process. No exte
 | Email Digest | Every hour | Summarizes unread emails across configured accounts |
 | Morning Brief | 7:30 AM weekdays | Combined email + weather + calendar briefing |
 | Daily Snippet | 8:00 AM weekdays | Geopolitical news brief from RSS feeds |
-| Bretalon Review | Every 2 hours | Reviews content submissions and editorial pipeline |
-| Bretalon AutoPublish | 6:00 AM Mon/Wed-Fri | Automated article publishing pipeline |
-| Bretalon Reply | Every 15 min | Monitors and responds to article comments |
+| Content Review | Every 2 hours | Reviews content submissions and editorial pipeline |
+| Content AutoPublish | 6:00 AM Mon/Wed-Fri | Automated article publishing pipeline |
+| Content Reply | Every 15 min | Monitors and responds to article comments |
 | Follow-up Reminder | 9:00 AM weekdays | Nags about unanswered outbound emails |
 | Cyber Threat Feed | Every hour | CVE monitoring, exploit tracking, threat intelligence |
 | Intel Deep Analysis | Every 12 hours | Deep geopolitical/security analysis articles |
