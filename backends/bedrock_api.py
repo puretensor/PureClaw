@@ -297,20 +297,27 @@ class BedrockAPIBackend:
         }
 
         # System prompt — Bedrock takes system=[{"text": "..."}]
+        # Blocks with cache_control get a cachePoint injected after them so
+        # Bedrock caches the static system prompt prefix across turns.
         system_blocks = _build_system_blocks(system_prompt, memory_context, extra_system_prompt)
         if system_blocks:
-            # Flatten to Bedrock format (list of {"text": ...})
             bedrock_system = []
             for block in system_blocks:
                 text = block.get("text", "")
                 if text:
                     bedrock_system.append({"text": text})
+                    if block.get("cache_control"):
+                        # Mark this position as a cache checkpoint
+                        bedrock_system.append({"cachePoint": {"type": "default"}})
             if bedrock_system:
                 kwargs["system"] = bedrock_system
 
-        # Tools
+        # Tools — append a cachePoint sentinel after all toolSpec entries so
+        # the full tool schema (static at runtime) is cached as a prefix.
         if self._tools_enabled and self._tools:
-            kwargs["toolConfig"] = {"tools": self._tools}
+            kwargs["toolConfig"] = {
+                "tools": self._tools + [{"cachePoint": {"type": "default"}}],
+            }
 
         return kwargs
 
