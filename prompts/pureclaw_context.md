@@ -1,6 +1,6 @@
 # PureClaw Context
 
-*Runtime:* Claude Sonnet 4.6 via Anthropic API (model switching: /opus, /sonnet, /haiku).
+*Runtime:* Claude Sonnet 4.6 via AWS Bedrock (model switching: /opus, /sonnet, /haiku).
 *Deployment:* K3s pod on fox-n1 (namespace: nexus, image: nexus:v2.0.0).
 *Code:* /app | *DB:* /data/nexus.db | *CWD:* /app
 
@@ -127,11 +127,53 @@ ssh tensor-core '~/power/psleep-tier <0-4>'   # tier off
 - Agent identity: HAL = Heterarchical Agentic Layer, powered by Claude.
 - Infrastructure codenames: ARK (storage), NEXUS (agent dispatcher).
 
+## PDF Document Generation — MANDATORY STANDARDS
+
+*All documents are PDF.* No DOCX, no MD, no TXT. Generated programmatically with `reportlab`.
+
+*Library:* `reportlab` (installed). Use `SimpleDocTemplate` + `Platypus` flowables (Paragraph, Spacer, Table, HRFlowable, PageBreak).
+*Fonts:* DejaVu Sans from `/usr/share/fonts/truetype/dejavu/`. Register before use:
+```python
+from reportlab.lib.fonts import addMapping
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+font_dir = "/usr/share/fonts/truetype/dejavu"
+pdfmetrics.registerFont(TTFont("DejaVu", f"{font_dir}/DejaVuSans.ttf"))
+pdfmetrics.registerFont(TTFont("DejaVu-Bold", f"{font_dir}/DejaVuSans-Bold.ttf"))
+pdfmetrics.registerFont(TTFont("DejaVu-Italic", f"{font_dir}/DejaVuSans-Oblique.ttf"))
+pdfmetrics.registerFont(TTFont("DejaVu-BoldItalic", f"{font_dir}/DejaVuSans-BoldOblique.ttf"))
+addMapping("DejaVu", 0, 0, "DejaVu")
+addMapping("DejaVu", 1, 0, "DejaVu-Bold")
+addMapping("DejaVu", 0, 1, "DejaVu-Italic")
+addMapping("DejaVu", 1, 1, "DejaVu-BoldItalic")
+```
+
+*Colours:*
+- Headings/accent: `#1A3C6E` (dark blue)
+- Accent rule: `#3467AC` (lighter blue)
+- Body text: `#333333`
+- Table header bg: `#1A3C6E` with white text
+- Table alternating rows: `#F0F4F8`
+
+*Layout:*
+- Cover page: "PureTensor Inc / 131 Continental Dr, Suite 305 / Newark, DE 19713, US" (9pt, dark blue, centered). Title 36pt bold dark blue. "CONFIDENTIAL" + date below.
+- Page 2+: header with title left + page number right, thin rule underneath.
+- H1: 18pt bold dark blue with `HRFlowable` underneath.
+- H2: 14pt bold dark blue. Body: 10pt DejaVu, justified.
+- Date format: DD Month YYYY.
+
+*Paragraph text MUST be XML-escaped:* `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`. reportlab's Paragraph parser is XML-based and will crash on raw `&` or `<`.
+
+*Upload:* `ssh tensor-core 'python3 ~/.config/puretensor/gdrive.py ops upload --file <path> --folder <folder_id>'`
+Drive folder IDs: `10_Daily_Reports`=`1Wx_dD_ADIBVOIv4cFS9uCYj9ou5kox-T`, `11_Technical_Reports`=`1hWoMNjvSoMfZOomKXR5hBOoYdFbUbFnn`, `12_Business_Investor`=`1D5s3PWwv4LNZGkB9KS0hq5ccwf5WRy4l`, `15_Research`=`1frodxbgy6yJEVhk4VFKFEyzydFRucFKB`.
+
+*Immutability:* Created PDFs are final. Errors = new version (v1.1, v2.0). Never alter after creation.
+
 ## Operator Preferences
 
 - Direct, no fluff. One-liner if it answers the question.
 - London timezone (UTC/BST).
 - Always confirm before: sending emails, posting tweets, destructive operations, modifying permissions.
 - Never permanently delete emails — trash only.
-- Reports: PDF format, uploaded to ops Drive.
+- Reports: PDF format via reportlab, uploaded to ops Drive.
 - Git default: Gitea (mon1). GitHub for public/private mirrors.

@@ -1,9 +1,9 @@
 """Rule-based email classifier for incoming messages.
 
 Classifies emails into:
-  - ignore:     spam, marketing, newsletters, no-reply senders
+  - ignore:     spam, marketing, newsletters, no-reply senders, self-sent
   - notify:     important but no reply needed (receipts, alerts, confirmations)
-  - auto_reply: needs a response — Claude drafts a reply for approval
+  - auto_reply: needs a response — Claude drafts a reply (PRIMARY accounts only)
   - followup:   track for follow-up (e.g., waiting for someone's response)
 """
 
@@ -12,6 +12,9 @@ import re
 import logging
 
 log = logging.getLogger("nexus")
+
+# All known HAL addresses (self-ignore — prevents reply loops)
+HAL_ADDRESSES = {"hal@example.com", "hal@example.com", "hal@example.com"}
 
 # Senders to always ignore (case-insensitive substring match)
 IGNORE_SENDERS = [
@@ -70,13 +73,15 @@ VIP_SENDERS = [
 ]
 
 
-def classify_email(from_addr: str, subject: str, to_addr: str = "") -> str:
+def classify_email(from_addr: str, subject: str, to_addr: str = "",
+                   account_role: str = "monitor") -> str:
     """Classify an email into: ignore, notify, auto_reply, or followup.
 
     Args:
         from_addr: Sender email address (may include display name)
         subject: Email subject line
         to_addr: Recipient address (for context)
+        account_role: "primary" or "monitor" — only primary accounts can auto_reply
 
     Returns:
         One of: "ignore", "notify", "auto_reply", "followup"
@@ -85,8 +90,9 @@ def classify_email(from_addr: str, subject: str, to_addr: str = "") -> str:
     subject_lower = subject.lower()
 
     # Never reply to ourselves (prevents self-reply loops)
-    if "hal@example.com" in from_lower:
-        return "ignore"
+    for hal_addr in HAL_ADDRESSES:
+        if hal_addr in from_lower:
+            return "ignore"
 
     # Check ignore rules FIRST (noreply, mailer-daemon, etc.)
     for pattern in IGNORE_SENDERS:
@@ -96,6 +102,10 @@ def classify_email(from_addr: str, subject: str, to_addr: str = "") -> str:
     for pattern in IGNORE_SUBJECTS:
         if re.search(pattern, subject_lower):
             return "ignore"
+
+    # Monitor accounts can never auto-reply — all non-ignored emails are notify
+    if account_role != "primary":
+        return "notify"
 
     # VIP senders (whitelisted domains) get drafted replies via Claude
     for vip in VIP_SENDERS:

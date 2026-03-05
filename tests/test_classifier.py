@@ -110,21 +110,26 @@ class TestNotifySubjects:
 class TestAutoReply:
 
     def test_vip_sender_alan(self):
-        assert classify_email("vip-user@example.com", "Report feedback") == "auto_reply"
+        assert classify_email("vip-user@example.com", "Report feedback", account_role="primary") == "auto_reply"
 
     def test_vip_sender_ops(self):
-        assert classify_email("ops@puretensor.ai", "Server question") == "auto_reply"
+        assert classify_email("ops@puretensor.ai", "Server question", account_role="primary") == "auto_reply"
 
     def test_vip_sender_personal(self):
-        assert classify_email("vip-personal@example.com", "Quick thought") == "auto_reply"
+        assert classify_email("vip-personal@example.com", "Quick thought", account_role="primary") == "auto_reply"
 
     def test_vip_case_insensitive(self):
-        assert classify_email("VIP-User@Example.com", "Report") == "auto_reply"
+        assert classify_email("VIP-User@Example.com", "Report", account_role="primary") == "auto_reply"
 
-    def test_vip_overrides_ignore(self):
-        """VIP sender check runs before ignore rules."""
-        # ops@puretensor.ai is VIP even though it might match some pattern
-        assert classify_email("ops@puretensor.ai", "Unsubscribe link") == "auto_reply"
+    def test_vip_overrides_notify(self):
+        """VIP sender check runs before notify rules (on primary accounts)."""
+        # ops@puretensor.ai is VIP — should auto_reply even for receipt-like subjects
+        assert classify_email("ops@puretensor.ai", "Your receipt", account_role="primary") == "auto_reply"
+
+    def test_monitor_account_never_auto_replies(self):
+        """Monitor accounts should always return notify, even for VIP senders."""
+        assert classify_email("vip-user@example.com", "Report feedback", account_role="monitor") == "notify"
+        assert classify_email("ops@puretensor.ai", "Server question", account_role="monitor") == "notify"
 
     def test_email_to_hal_from_unknown(self):
         """Emails to hal@ from unknown senders get notify (not auto_reply).
@@ -133,7 +138,8 @@ class TestAutoReply:
         The pureclaw_email_responder observer handles hal@ with a strict allowlist.
         """
         assert classify_email(
-            "stranger@company.com", "Hello", to_addr="hal@example.com"
+            "stranger@company.com", "Hello", to_addr="hal@example.com",
+            account_role="primary",
         ) == "notify"
 
 

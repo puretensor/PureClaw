@@ -138,11 +138,11 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_opus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # If on a non-Claude backend, switch back to claude_code
+    # Switch to Bedrock API backend for Claude models
     import config
     from backends import reset_backend
-    if config.ENGINE_BACKEND != "claude_code":
-        config.ENGINE_BACKEND = "claude_code"
+    if config.ENGINE_BACKEND not in ("bedrock_api", "anthropic_api"):
+        config.ENGINE_BACKEND = "bedrock_api"
         reset_backend()
     update_model(chat_id, "opus")
     await update.message.reply_text(f"Switched to {get_model_display('opus')}.")
@@ -151,11 +151,11 @@ async def cmd_opus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_sonnet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # If on a non-Claude backend, switch back to claude_code
+    # Switch to Bedrock API backend for Claude models
     import config
     from backends import reset_backend
-    if config.ENGINE_BACKEND != "claude_code":
-        config.ENGINE_BACKEND = "claude_code"
+    if config.ENGINE_BACKEND not in ("bedrock_api", "anthropic_api"):
+        config.ENGINE_BACKEND = "bedrock_api"
         reset_backend()
     update_model(chat_id, "sonnet")
     await update.message.reply_text(f"Switched to {get_model_display('sonnet')}.")
@@ -191,21 +191,25 @@ async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
+                label("Bedrock Sonnet", current == "bedrock_api" and current_model == "sonnet"),
+                callback_data="backend:bedrock_api:sonnet",
+            ),
+            InlineKeyboardButton(
+                label("Bedrock Opus", current == "bedrock_api" and current_model == "opus"),
+                callback_data="backend:bedrock_api:opus",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 label("Ollama (local)", current == "ollama"),
                 callback_data="backend:ollama:sonnet",
             ),
         ],
         [
             InlineKeyboardButton(
-                label("Claude Sonnet", current == "claude_code" and current_model == "sonnet"),
+                label("Claude CLI", current == "claude_code"),
                 callback_data="backend:claude_code:sonnet",
             ),
-            InlineKeyboardButton(
-                label("Claude Opus", current == "claude_code" and current_model == "opus"),
-                callback_data="backend:claude_code:opus",
-            ),
-        ],
-        [
             InlineKeyboardButton(
                 label("Codex", current == "codex_cli"),
                 callback_data="backend:codex_cli:sonnet",

@@ -1,6 +1,7 @@
 """Unified SQLite database for NEXUS — sessions, scheduled tasks, drafts, observer state, email tracking."""
 
 import asyncio
+import hashlib
 import sqlite3
 from datetime import datetime, timezone
 
@@ -163,10 +164,29 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id TEXT NOT NULL UNIQUE,
                 account_name TEXT,
+                content_hash TEXT,
                 seen_at TEXT
             )"""
         )
         log.info("Created email_seen table")
+    elif "content_hash" not in email_cols:
+        con.execute("ALTER TABLE email_seen ADD COLUMN content_hash TEXT")
+        log.info("Added content_hash column to email_seen")
+
+    # Email replies sent (audit trail + dedup for auto-replies)
+    reply_cols = [row[1] for row in con.execute("PRAGMA table_info(email_replies_sent)").fetchall()]
+    if not reply_cols:
+        con.execute(
+            """CREATE TABLE email_replies_sent (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_addr TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                content_hash TEXT NOT NULL UNIQUE,
+                reply_body_preview TEXT,
+                sent_at TEXT DEFAULT (datetime('now'))
+            )"""
+        )
+        log.info("Created email_replies_sent table")
 
     # Conversation history (for stateless backends like anthropic_api)
     hist_cols = [row[1] for row in con.execute("PRAGMA table_info(conversation_history)").fetchall()]
@@ -927,6 +947,76 @@ def is_email_seen(message_id: str) -> bool:
     ).fetchone()
     con.close()
     return row is not None
+
+
+def content_hash(sender: str, subject: str, body_prefix: str) -> str:
+    """SHA256 of normalized sender + subject + first 500 chars of body."""
+    normalized = f"{sender.lower().strip()}|{subject.strip()}|{body_prefix[:500].strip()}"
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def is_email_content_seen(chash: str) -> bool:
+    """Check if an email content hash has been seen (cross-account dedup)."""
+    con = _connect()
+    row = con.execute(
+        "SELECT 1 FROM email_seen WHERE content_hash = ?",
+        (chash,),
+    ).fetchone()
+    con.close()
+    return row is not None
+
+
+def mark_email_content_seen(chash: str, message_id: str, account_name: str) -> None:
+    """Mark an email as seen with both message_id and content_hash."""
+    now = _now()
+    con = _connect()
+    # Update existing row if message_id already inserted (add content_hash)
+    con.execute(
+        """INSERT INTO email_seen (message_id, account_name, content_hash, seen_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(message_id) DO UPDATE SET content_hash = ?""",
+        (message_id, account_name, chash, now, chash),
+    )
+    con.commit()
+    con.close()
+
+
+def has_reply_been_sent(chash: str) -> bool:
+    """Check if HAL has already replied to this content."""
+    con = _connect()
+    row = con.execute(
+        "SELECT 1 FROM email_replies_sent WHERE content_hash = ?",
+        (chash,),
+    ).fetchone()
+    con.close()
+    return row is not None
+
+
+def record_reply_sent(sender_addr: str, subject: str, chash: str,
+                      reply_preview: str) -> None:
+    """Record that HAL sent a reply (audit trail + dedup)."""
+    con = _connect()
+    con.execute(
+        """INSERT OR IGNORE INTO email_replies_sent
+           (sender_addr, subject, content_hash, reply_body_preview)
+           VALUES (?, ?, ?, ?)""",
+        (sender_addr, subject, chash, reply_preview),
+    )
+    con.commit()
+    con.close()
+
+
+def count_replies_to_sender(sender_addr: str, hours: int = 1) -> int:
+    """Count replies sent to a sender within the last N hours (rate limiting)."""
+    con = _connect()
+    row = con.execute(
+        """SELECT COUNT(*) FROM email_replies_sent
+           WHERE sender_addr = ?
+             AND sent_at > datetime('now', ? || ' hours')""",
+        (sender_addr.lower().strip(), f"-{hours}"),
+    ).fetchone()
+    con.close()
+    return row[0] if row else 0
 
 
 # ---------------------------------------------------------------------------
