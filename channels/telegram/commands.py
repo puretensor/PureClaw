@@ -144,11 +144,11 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_opus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # Switch to Bedrock API backend for Claude models
+    # Switch to Claude Code CLI backend (Max subscription)
     import config
     from backends import reset_backend
-    if config.ENGINE_BACKEND not in ("bedrock_api", "anthropic_api", "hybrid"):
-        config.ENGINE_BACKEND = "bedrock_api"
+    if config.ENGINE_BACKEND != "claude_code":
+        config.ENGINE_BACKEND = "claude_code"
         reset_backend()
     update_model(chat_id, "opus")
     await update.message.reply_text(f"Switched to {get_model_display('opus')}.")
@@ -157,11 +157,11 @@ async def cmd_opus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_sonnet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # Switch to Bedrock API backend for Claude models
+    # Switch to Claude Code CLI backend (Max subscription)
     import config
     from backends import reset_backend
-    if config.ENGINE_BACKEND not in ("bedrock_api", "anthropic_api", "hybrid"):
-        config.ENGINE_BACKEND = "bedrock_api"
+    if config.ENGINE_BACKEND != "claude_code":
+        config.ENGINE_BACKEND = "claude_code"
         reset_backend()
     update_model(chat_id, "sonnet")
     await update.message.reply_text(f"Switched to {get_model_display('sonnet')}.")
@@ -197,12 +197,12 @@ async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                label("Bedrock Sonnet", current == "bedrock_api" and current_model == "sonnet"),
-                callback_data="backend:bedrock_api:sonnet",
+                label("Claude Sonnet", current == "claude_code" and current_model == "sonnet"),
+                callback_data="backend:claude_code:sonnet",
             ),
             InlineKeyboardButton(
-                label("Bedrock Opus", current == "bedrock_api" and current_model == "opus"),
-                callback_data="backend:bedrock_api:opus",
+                label("Claude Opus", current == "claude_code" and current_model == "opus"),
+                callback_data="backend:claude_code:opus",
             ),
         ],
         [
@@ -213,8 +213,8 @@ async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton(
-                label("Claude CLI", current == "claude_code"),
-                callback_data="backend:claude_code:sonnet",
+                label("Bedrock Sonnet", current == "bedrock_api" and current_model == "sonnet"),
+                callback_data="backend:bedrock_api:sonnet",
             ),
             InlineKeyboardButton(
                 label("Codex", current == "codex_cli"),
