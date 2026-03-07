@@ -196,16 +196,14 @@ ssh "$FOX_N1" "kubectl exec -n nexus nexus-seed -- sh -c '
 
 # Seed CONTEXT.md from pureclaw_context.md (only if not already present)
 if [ -f "$NEXUS_DIR/prompts/pureclaw_context.md" ]; then
-  scp "$NEXUS_DIR/prompts/pureclaw_context.md" "$FOX_N1:/tmp/context.md"
-  ssh "$FOX_N1" "kubectl exec -n nexus nexus-seed -- sh -c '
-    if [ ! -f /data/memory/CONTEXT.md ]; then
-      cp /tmp/context.md /data/memory/CONTEXT.md
-      echo \"  Seeded CONTEXT.md from pureclaw_context.md\"
-    else
-      echo \"  CONTEXT.md already exists, skipping seed\"
-    fi
-  '"
-  ssh "$FOX_N1" "rm -f /tmp/context.md"
+  NEEDS_SEED=$(ssh "$FOX_N1" "kubectl exec -n nexus nexus-seed -- sh -c '[ -f /data/memory/CONTEXT.md ] && echo no || echo yes'")
+  if [ "$NEEDS_SEED" = "yes" ]; then
+    scp "$NEXUS_DIR/prompts/pureclaw_context.md" "$FOX_N1:/tmp/context.md"
+    ssh "$FOX_N1" "kubectl cp /tmp/context.md nexus/nexus-seed:/data/memory/CONTEXT.md && rm /tmp/context.md"
+    echo "  Seeded CONTEXT.md from pureclaw_context.md"
+  else
+    echo "  CONTEXT.md already exists, skipping seed"
+  fi
 fi
 
 # Seed LESSONS.md (only if not already present)
