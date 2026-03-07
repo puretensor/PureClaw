@@ -5,14 +5,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pandoc poppler-utils qpdf procps ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 22 LTS from NodeSource (Debian-packaged node is too old for Codex/Gemini CLIs)
+# Node.js 22 LTS from NodeSource (needed for Gemini CLI runtime + doc generation)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js packages: doc generation + CLI agents
-RUN npm install -g docx pptxgenjs @openai/codex \
+# Node.js packages: doc generation + Gemini CLI
+# Gemini: --ignore-scripts skips tree-sitter native build (blocked by Docker seccomp)
+RUN npm install -g docx pptxgenjs \
     && npm install -g --ignore-scripts @google/gemini-cli
+
+# Codex CLI — standalone Rust binary, no Node.js needed
+RUN curl -fsSL https://github.com/openai/codex/releases/latest/download/codex-x86_64-unknown-linux-musl.tar.gz \
+    | tar xz -C /usr/local/bin \
+    && mv /usr/local/bin/codex-x86_64-unknown-linux-musl /usr/local/bin/codex \
+    && chmod +x /usr/local/bin/codex
 
 WORKDIR /app
 
