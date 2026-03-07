@@ -274,7 +274,7 @@ TOOL_SCHEMAS = [
             "description": (
                 "Make an outbound phone call via HAL. Use for booking/cancelling "
                 "appointments, calling businesses for information, or routine phone "
-                "tasks. HAL introduces himself as Heimir's personal assistant. "
+                "tasks. HAL introduces himself as the operator's personal assistant. "
                 "Returns the call transcript and outcome when the call completes."
             ),
             "parameters": {
@@ -294,7 +294,7 @@ TOOL_SCHEMAS = [
                     },
                     "voice": {
                         "type": "string",
-                        "description": "Voice to use: 'hal' (default) or 'heimir'",
+                        "description": "Voice to use: 'hal' (default) or 'operator'",
                     },
                 },
                 "required": ["phone_number", "purpose"],

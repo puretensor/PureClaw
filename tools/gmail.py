@@ -568,7 +568,7 @@ def main():
     parser = argparse.ArgumentParser(description='PureTensor Gmail CLI')
     all_choices = list(ACCOUNTS.keys()) + list(IDENTITY_ALIASES.keys()) + ['all']
     parser.add_argument('account', choices=all_choices,
-                        help='Account or identity alias (hal, hal-org, heimir)')
+                        help='Account or identity alias (hal, hal-org, personal)')
     parser.add_argument('command', choices=[
         'auth', 'inbox', 'unread', 'search', 'read', 'delete', 'trash', 'batch-trash', 'spam',
         'labels', 'filter-create', 'filter-list', 'filter-delete',
