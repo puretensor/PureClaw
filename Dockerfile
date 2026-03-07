@@ -2,11 +2,17 @@ FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client ffmpeg ripgrep curl git fonts-dejavu-core fonts-dejavu-extra \
-    pandoc poppler-utils qpdf nodejs npm procps \
+    pandoc poppler-utils qpdf procps ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js packages: doc generation + CLI agents (Codex, Gemini)
-RUN npm install -g docx pptxgenjs @openai/codex @google/gemini-cli
+# Node.js 22 LTS from NodeSource (Debian-packaged node is too old for Codex/Gemini CLIs)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js packages: doc generation + CLI agents
+RUN npm install -g docx pptxgenjs @openai/codex \
+    && npm install -g --ignore-scripts @google/gemini-cli
 
 WORKDIR /app
 

@@ -55,7 +55,8 @@ echo "  Build context staged."
 # -------------------------------------------------------
 echo "[2/5] Building container image on fox-n1..."
 
-ssh "$FOX_N1" "cd $BUILD_DIR && docker build -t nexus:$VERSION . 2>&1" | tail -10
+# DOCKER_BUILDKIT=0: gemini-cli's tree-sitter native build needs unrestricted spawn
+ssh "$FOX_N1" "cd $BUILD_DIR && DOCKER_BUILDKIT=0 docker build -t nexus:$VERSION . 2>&1" | tail -20
 
 # Import into k3s containerd
 echo "  Importing image into k3s containerd..."
