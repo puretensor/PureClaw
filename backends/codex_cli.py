@@ -1,7 +1,10 @@
 """OpenAI Codex CLI backend — shells out to the Codex CLI binary.
 
-Requires: npm install -g @openai/codex (or equivalent)
-CLI flags verified against `codex exec --help` (v0.101.0).
+Supports session resume via `codex exec resume <thread_id> <prompt>`.
+First message uses `codex exec <prompt>`, subsequent messages in the same
+session use `codex exec resume <thread_id> <prompt>` to maintain context.
+
+CLI flags verified against `codex exec --help` / `codex exec resume --help`.
 """
 
 import asyncio
@@ -30,12 +33,7 @@ class CodexCLIBackend:
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
     ) -> None:
-        """Write instructions to ~/.codex/instructions.md before each Codex call.
-
-        Codex CLI reads INSTRUCTIONS.md from CWD (like AGENTS.md) as additional
-        context. We write the full system prompt + memory there so the model
-        receives it alongside the user message.
-        """
+        """Write instructions to AGENTS.md in CWD before each Codex call."""
         import os
         parts = []
         if system_prompt:
@@ -45,13 +43,43 @@ class CodexCLIBackend:
         if extra_system_prompt:
             parts.append(extra_system_prompt)
 
-        # Write as AGENTS.md in the CWD — Codex auto-reads this file
         from config import CODEX_CWD
         cwd = CODEX_CWD or "/app"
         agents_path = os.path.join(cwd, "AGENTS.md")
         content = "\n\n".join(parts) if parts else ""
         with open(agents_path, "w") as f:
             f.write(content)
+
+    def _build_cmd(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+    ) -> list[str]:
+        """Build the CLI command.
+
+        New session:    codex exec <prompt> [flags]
+        Resume session: codex exec resume <thread_id> <prompt> [flags]
+
+        Note: `codex exec resume` does NOT accept -C/--cd (inherits from
+        the original session) or --skip-git-repo-check.
+        """
+        if session_id:
+            # Resume existing session — limited flag set
+            cmd = [self._bin, "exec", "resume", session_id, message,
+                   "--json", "--dangerously-bypass-approvals-and-sandbox"]
+            if self._model:
+                cmd.extend(["-m", self._model])
+        else:
+            # New session — full flag set
+            cmd = [self._bin, "exec", message,
+                   "--json", "--dangerously-bypass-approvals-and-sandbox",
+                   "--skip-git-repo-check"]
+            if self._model:
+                cmd.extend(["-m", self._model])
+            if self._cwd:
+                cmd.extend(["-C", self._cwd])
+        return cmd
 
     @property
     def name(self) -> str:
@@ -67,7 +95,7 @@ class CodexCLIBackend:
 
     @property
     def supports_sessions(self) -> bool:
-        return False
+        return True
 
     def call_sync(
         self,
@@ -84,18 +112,10 @@ class CodexCLIBackend:
         Returns {"result": str, "session_id": str | None}
         """
         self._write_instructions(system_prompt, memory_context)
-        cmd = [
-            self._bin, "exec", prompt,
-            "--json",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-        ]
-        if self._model:
-            cmd.extend(["-m", self._model])
-        if self._cwd:
-            cmd.extend(["-C", self._cwd])
+        cmd = self._build_cmd(prompt, session_id=session_id)
 
-        log.info("Codex CLI call (sync): %s", " ".join(cmd[:5]) + " ...")
+        mode = "resume" if session_id else "new"
+        log.info("Codex CLI (sync, %s): %s", mode, " ".join(cmd[:6]) + " ...")
 
         try:
             result = subprocess.run(
@@ -107,16 +127,15 @@ class CodexCLIBackend:
                 "session_id": None,
             }
         except subprocess.TimeoutExpired:
-            return {"result": f"Codex CLI timed out after {timeout}s", "session_id": None}
+            return {"result": f"Codex CLI timed out after {timeout}s", "session_id": session_id}
 
         if result.returncode != 0:
             return {
                 "result": f"Codex CLI error (exit {result.returncode}): {result.stderr[:500]}",
-                "session_id": None,
+                "session_id": session_id,
             }
 
-        # Codex exec --json emits JSONL lines; extract final result text
-        return _parse_codex_jsonl(result.stdout)
+        return _parse_codex_jsonl(result.stdout, fallback_session_id=session_id)
 
     async def call_streaming(
         self,
@@ -135,18 +154,10 @@ class CodexCLIBackend:
         Returns {"result": str, "session_id": str | None, "written_files": list}
         """
         self._write_instructions(system_prompt, memory_context, extra_system_prompt)
-        cmd = [
-            self._bin, "exec", message,
-            "--json",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-        ]
-        if self._model:
-            cmd.extend(["-m", self._model])
-        if self._cwd:
-            cmd.extend(["-C", self._cwd])
+        cmd = self._build_cmd(message, session_id=session_id)
 
-        log.info("Codex CLI (streaming): %s", " ".join(cmd[:5]) + " ...")
+        mode = "resume" if session_id else "new"
+        log.info("Codex CLI (streaming, %s): %s", mode, " ".join(cmd[:6]) + " ...")
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -164,7 +175,12 @@ class CodexCLIBackend:
 
         try:
             data = await asyncio.wait_for(
-                _read_codex_stream(proc, on_progress=on_progress, streaming_editor=streaming_editor),
+                _read_codex_stream(
+                    proc,
+                    on_progress=on_progress,
+                    streaming_editor=streaming_editor,
+                    fallback_session_id=session_id,
+                ),
                 timeout=1800,
             )
         except asyncio.TimeoutError:
@@ -172,7 +188,6 @@ class CodexCLIBackend:
             await proc.communicate()
             raise TimeoutError("Codex CLI timed out after 1800s")
         except RuntimeError as e:
-            # _read_codex_stream raises RuntimeError on empty output — check stderr for details
             await proc.wait()
             stderr_bytes = await proc.stderr.read() if proc.stderr else b""
             err = stderr_bytes.decode().strip()
@@ -180,12 +195,12 @@ class CodexCLIBackend:
             if "401" in err or "Unauthorized" in err:
                 return {
                     "result": "Codex CLI auth failed (401). Run `codex login` to re-authenticate.",
-                    "session_id": None,
+                    "session_id": session_id,
                     "written_files": [],
                 }
             return {
                 "result": f"Codex CLI error: {err[:500] or str(e)}",
-                "session_id": None,
+                "session_id": session_id,
                 "written_files": [],
             }
 
@@ -202,13 +217,20 @@ class CodexCLIBackend:
         return data
 
 
-def _parse_codex_jsonl(stdout: str) -> dict:
-    """Parse JSONL output from `codex exec --json` and extract the final result.
+def _extract_thread_id(event: dict, fallback: str | None = None) -> str | None:
+    """Extract thread_id from a thread.started event."""
+    if event.get("type") == "thread.started":
+        tid = event.get("thread_id")
+        if tid:
+            return tid
+    return fallback
 
-    Supports both legacy format (message/output_text) and v0.101+ format
-    (item.completed with item.type == "agent_message").
-    """
+
+def _parse_codex_jsonl(stdout: str, fallback_session_id: str | None = None) -> dict:
+    """Parse JSONL output from `codex exec --json` and extract result + thread_id."""
     last_text = ""
+    session_id = fallback_session_id
+
     for line in stdout.strip().splitlines():
         line = line.strip()
         if not line:
@@ -217,10 +239,17 @@ def _parse_codex_jsonl(stdout: str) -> dict:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+
         event_type = event.get("type", "")
 
+        # Capture thread_id for session continuity
+        if event_type == "thread.started":
+            tid = event.get("thread_id")
+            if tid:
+                session_id = tid
+
         # v0.101+ format
-        if event_type == "item.completed":
+        elif event_type == "item.completed":
             item = event.get("item", {})
             if item.get("type") == "agent_message":
                 text = item.get("text", "")
@@ -234,28 +263,30 @@ def _parse_codex_jsonl(stdout: str) -> dict:
                 last_text = content
             elif isinstance(content, list):
                 for part in content:
-                    if isinstance(part, dict) and part.get("type") == "output_text":
-                        last_text = part.get("text", last_text)
-                    elif isinstance(part, dict) and part.get("type") == "text":
+                    if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
                         last_text = part.get("text", last_text)
         elif event_type in ("output_text", "text"):
             last_text = event.get("text", last_text)
 
     return {
         "result": last_text.strip()[:4000] if last_text else stdout.strip()[:4000] or "(no output)",
-        "session_id": None,
+        "session_id": session_id,
     }
 
 
-async def _read_codex_stream(proc, on_progress=None, streaming_editor=None) -> dict:
+async def _read_codex_stream(
+    proc,
+    on_progress=None,
+    streaming_editor=None,
+    fallback_session_id: str | None = None,
+) -> dict:
     """Read JSONL output from Codex CLI line by line.
 
-    Parses events for text deltas and tool-use status.
-    Supports both legacy format (message/output_text) and v0.101+ format
-    (item.started/item.completed with item.type).
+    Captures thread_id from thread.started events for session persistence.
     """
     written_files = []
     streamed_text = ""
+    session_id = fallback_session_id
 
     while True:
         try:
@@ -282,8 +313,15 @@ async def _read_codex_stream(proc, on_progress=None, streaming_editor=None) -> d
 
         event_type = event.get("type", "")
 
+        # Capture thread_id for session continuity
+        if event_type == "thread.started":
+            tid = event.get("thread_id")
+            if tid:
+                session_id = tid
+                log.info("Codex thread_id captured: %s", tid)
+
         # --- v0.101+ format: item.completed / item.started ---
-        if event_type == "item.completed":
+        elif event_type == "item.completed":
             item = event.get("item", {})
             item_type = item.get("type", "")
             if item_type == "agent_message":
@@ -346,6 +384,6 @@ async def _read_codex_stream(proc, on_progress=None, streaming_editor=None) -> d
 
     return {
         "result": streamed_text,
-        "session_id": None,
+        "session_id": session_id,
         "written_files": written_files,
     }

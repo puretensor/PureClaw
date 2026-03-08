@@ -120,7 +120,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 label = display
 
-            await query.message.edit_text(f"Switched to {label}.")
+            # Warn about stateless backends
+            warning = ""
+            if backend_name == "gemini_cli":
+                warning = "\n\u26a0\ufe0f This backend has NO session memory — each message is independent."
+
+            await query.message.edit_text(f"Switched to {label}.{warning}")
         return
 
     if data.startswith("infra:"):

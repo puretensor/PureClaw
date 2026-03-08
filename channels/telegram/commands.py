@@ -221,7 +221,7 @@ async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data="backend:codex_cli:sonnet",
             ),
             InlineKeyboardButton(
-                label("Gemini", current == "gemini_cli"),
+                label("Gemini (no memory)", current == "gemini_cli"),
                 callback_data="backend:gemini_cli:sonnet",
             ),
         ],
