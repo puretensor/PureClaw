@@ -12,7 +12,7 @@ PureClaw is a personal AI agent that lives in Telegram, Discord, and your inbox.
 
 You message your bot. PureClaw routes your message to whichever AI engine is active, streams the response back in real time, and gives the engine access to 19 built-in tools — shell commands, file operations, web search, phone calls, specialist agents, subagent parallelism, task tracking, and persistent memory.
 
-Beyond conversation, PureClaw runs 20 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits), handles email drafts with approve/reject buttons, schedules reminders, compresses long conversations automatically, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
+Beyond conversation, PureClaw runs 17 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits), handles email with auto-reply for VIP senders and approve/reject drafts for everyone else, schedules reminders, compresses long conversations automatically, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
 
 ---
 
@@ -448,19 +448,20 @@ PureClaw uses a file-based memory system:
 
 Memories persist to disk and survive restarts. The AI can save lessons, preferences, project context, and operational knowledge.
 
-### Email Draft Queue
+### Email Handling
 
-PureClaw can monitor your email and draft replies. The workflow is human-in-the-loop:
+PureClaw monitors your IMAP inboxes and classifies each incoming message into one of four lanes:
 
-```
-Incoming email
-  -> AI classifies and drafts a reply
-  -> You get a Telegram notification with [Approve] [Reject] buttons
-  -> Approve: sends the reply and creates a follow-up tracker
-  -> Reject: discards the draft
-```
+| Classification | What happens |
+|----------------|-------------|
+| **ignore** | Spam, newsletters, no-reply — silently skipped |
+| **notify** | Telegram notification only, no reply drafted |
+| **auto_reply** | AI drafts and sends a reply immediately (VIP senders only) |
+| **followup** | Tracked for follow-up reminders |
 
-You always have the final say. Nothing sends without your tap.
+**Auto-reply** fires only for whitelisted VIP domains and must pass 11 gates before anything sends: primary account, not self-addressed, not a workflow email, not previously seen (Message-ID + content hash), under 24 hours old, not a terminal one-liner, classifier match, no duplicate reply, sender rate < 3/hour, and a non-empty engine response. See `channels/email_in.py` for the full gate list.
+
+**Draft queue** is available for messages that need human approval — you get Telegram notifications with [Approve] / [Reject] buttons, and nothing sends until you tap. But VIP auto-replies bypass this queue by design.
 
 ### Context Compression
 
@@ -541,7 +542,7 @@ nexus.py (entry point)
   |     +-- Discord            Streaming, slash commands
   |     +-- Email Input        IMAP polling, classification, draft generation
   |
-  +-- Observers (20)           Background tasks on cron schedules + persistent threads
+  +-- Observers (17)           Background tasks on cron schedules + persistent threads
   +-- Dispatcher               Instant data cards (weather, markets, trains, nodes)
   +-- Draft Queue              Email drafts with Telegram approve/reject
   +-- Scheduler                User-defined tasks and reminders
@@ -716,7 +717,7 @@ PureClaw/
 |     +-- discord/              Discord bot handlers and streaming
 |     +-- email_in.py           IMAP polling email input
 |
-+-- observers/                  20 background observers (cron + persistent)
++-- observers/                  17 background observers (cron + persistent)
 +-- dispatcher/                 Data cards (weather, markets, trains, nodes)
 +-- drafts/                     Email draft queue with approve/reject
 +-- handlers/                   Telegram handlers (voice, photo, document, location)
@@ -790,7 +791,7 @@ pandas>=2.0.0
 - **Single-user only** — locked to one Telegram/Discord user ID
 - **No telemetry** — no analytics, no tracking, no phoning home
 - **No cloud dependency** — Ollama and vLLM keep everything local; cloud backends use your own keys/subscriptions
-- **Human-in-the-loop email** — drafts require explicit approval before sending
+- **Gated email replies** — VIP auto-replies pass 11 safety gates; all other drafts require explicit Telegram approval before sending
 - **Plan mode** — AI can self-restrict to read-only exploration before making changes
 - **Git security auditing** — automated scanning for secrets and sensitive data in repos
 - **Your hardware** — not a managed platform, not a SaaS product

@@ -1,4 +1,4 @@
-"""Email input channel — polls IMAP for messages to hal@example.com.
+"""Email input channel — polls IMAP for incoming messages.
 
 Lifecycle:
   1. Polls IMAP inbox every 2 minutes for new unread messages
