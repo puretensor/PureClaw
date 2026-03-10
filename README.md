@@ -12,7 +12,7 @@ PureClaw is a personal AI agent that lives in Telegram, Discord, and your inbox.
 
 You message your bot. PureClaw routes your message to whichever AI engine is active, streams the response back in real time, and gives the engine access to 19 built-in tools — shell commands, file operations, web search, phone calls, specialist agents, subagent parallelism, task tracking, and persistent memory.
 
-Beyond conversation, PureClaw runs 17 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits), handles email with auto-reply for VIP senders and approve/reject drafts for everyone else, schedules reminders, compresses long conversations automatically, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
+Beyond conversation, PureClaw runs 16 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits), handles email with auto-reply for VIP senders and approve/reject drafts for everyone else, schedules reminders, compresses long conversations automatically, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
 
 ---
 
@@ -29,7 +29,7 @@ Eight engines. Swap anytime with `/backend` or one line in `.env`.
 | **Claude Code** | CLI Agent | Anthropic's [Claude Code](https://claude.ai/claude-code) CLI | Full agentic | Subscription |
 | **Codex** | CLI Agent | OpenAI's [Codex](https://openai.com/index/codex/) CLI | Full agentic | Subscription |
 | **Gemini** | CLI Agent | Google's [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Full agentic | Subscription |
-| **Hybrid** | Advanced | Routes between Bedrock API (fast) and Claude Code CLI (power) | Both | Mixed |
+| **Hybrid** | Advanced | Routes between Gemini API (fast) and Claude Code CLI (power) | Both | Mixed |
 
 **Which should I pick?**
 
@@ -240,7 +240,7 @@ ENGINE_BACKEND=gemini_cli
 <details>
 <summary><strong>Hybrid (API + CLI, advanced)</strong></summary>
 
-The hybrid backend routes between a fast API backend (Bedrock) and a powerful CLI backend (Claude Code). Simple queries go to the API; complex multi-step tasks are handed to the CLI.
+The hybrid backend routes between a fast API backend (Gemini) and a powerful CLI backend (Claude Code). Simple queries go to the API; complex multi-step tasks are handed to the CLI.
 
 Configure both backends, then:
 ```bash
@@ -494,8 +494,6 @@ Background tasks that run on cron schedules inside the PureClaw process. No exte
 | Morning Brief | 7:30 AM weekdays | Combined email + weather + calendar briefing |
 | Daily Snippet | 8:00 AM weekdays | Geopolitical news brief from RSS feeds |
 | Content Review | Every 2 hours | Reviews content submissions and editorial pipeline |
-| Content AutoPublish | 6:00 AM Mon/Wed-Fri | Automated article publishing pipeline |
-| Content Reply | Every 15 min | Monitors and responds to article comments |
 | Follow-up Reminder | 9:00 AM weekdays | Nags about unanswered outbound emails |
 | Cyber Threat Feed | Every hour | CVE monitoring, exploit tracking, threat intelligence |
 | Intel Deep Analysis | Every 12 hours | Deep geopolitical/security analysis articles |
@@ -542,7 +540,7 @@ nexus.py (entry point)
   |     +-- Discord            Streaming, slash commands
   |     +-- Email Input        IMAP polling, classification, draft generation
   |
-  +-- Observers (17)           Background tasks on cron schedules + persistent threads
+  +-- Observers (16)           Background tasks on cron schedules + persistent threads
   +-- Dispatcher               Instant data cards (weather, markets, trains, nodes)
   +-- Draft Queue              Email drafts with Telegram approve/reject
   +-- Scheduler                User-defined tasks and reminders
