@@ -44,14 +44,14 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "65536"))
 GEMINI_THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
 
-# vLLM — local OpenAI-compatible endpoint
-VLLM_URL = os.environ.get("VLLM_URL", "http://localhost:8200/v1")
-VLLM_MODEL = os.environ.get("VLLM_MODEL", "/mnt/storage/models/Qwen3-235B-A22B-Instruct-2507-NVFP4")
+# vLLM — NVIDIA Nemotron Super (local, 2x RTX PRO 6000 Blackwell)
+VLLM_URL = os.environ.get("VLLM_URL", "http://127.0.0.1:5000/v1")
+VLLM_MODEL = os.environ.get("VLLM_MODEL", "nvidia/nemotron-3-super")
 VLLM_TOOLS_ENABLED = os.environ.get("VLLM_TOOLS_ENABLED", "true").lower() == "true"
 VLLM_TOOL_MAX_ITER = int(os.environ.get("VLLM_TOOL_MAX_ITER", "10"))
 VLLM_TOOL_TIMEOUT = int(os.environ.get("VLLM_TOOL_TIMEOUT", "60"))
 VLLM_TOTAL_TIMEOUT = int(os.environ.get("VLLM_TOTAL_TIMEOUT", "300"))
-VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "8192"))
+VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "32768"))
 
 # Ollama — local models (default)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")

@@ -115,7 +115,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_model(chat_id, model_name)
 
             display = get_model_display(model_name)
-            if backend_name == "ollama":
+            if backend_name == "vllm":
+                label = "NVIDIA Nemotron Super (local)"
+            elif backend_name == "ollama":
                 label = f"{display} (local, with tools)"
             else:
                 label = display

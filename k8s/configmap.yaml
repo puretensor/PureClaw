@@ -4,8 +4,14 @@ metadata:
   name: nexus-config
   namespace: nexus
 data:
-  # Engine
-  ENGINE_BACKEND: "claude_code"
+  # Engine — NVIDIA Nemotron Super (primary)
+  ENGINE_BACKEND: "vllm"
+  VLLM_URL: "http://100.121.42.54:5000/v1"
+  VLLM_MODEL: "nvidia/nemotron-3-super"
+  VLLM_MAX_TOKENS: "32768"
+  VLLM_TOOLS_ENABLED: "true"
+
+  # Claude (fallback)
   CLAUDE_MODEL: "sonnet"
   ANTHROPIC_MODEL: "claude-sonnet-4-6"
   ANTHROPIC_MAX_TOKENS: "8192"

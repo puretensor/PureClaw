@@ -42,7 +42,9 @@ class BretalonReviewObserver(Observer):
     SEND_WINDOW_HOURS = 36
 
     # State file for tracking already-emailed post IDs
-    STATE_FILE = Path(__file__).parent / ".state" / "bretalon_review_sent.json"
+    STATE_FILE = Path(
+        os.environ.get("OBSERVER_STATE_DIR", str(Path(__file__).parent / ".state"))
+    ) / "bretalon_review_sent.json"
 
     # -- SMTP config (all from env vars, no defaults) --
 

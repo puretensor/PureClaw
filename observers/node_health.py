@@ -11,6 +11,7 @@ Cooldown prevents repeat alerts for the same node within 30 minutes.
 
 import json
 import logging
+import os
 import time
 import urllib.parse
 import urllib.request
@@ -33,7 +34,9 @@ class NodeHealthObserver(Observer):
 
     PROMETHEUS_URL = PROMETHEUS_URL
     COOLDOWN_SECONDS = 1800  # 30 min between alerts for the same node
-    STATE_DIR = Path(__file__).parent / ".state"
+    STATE_DIR = Path(
+        os.environ.get("OBSERVER_STATE_DIR", str(Path(__file__).parent / ".state"))
+    )
 
     # -- Prometheus query --
 

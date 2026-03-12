@@ -181,6 +181,21 @@ async def cmd_ollama(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized
+async def cmd_nemotron(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Switch to NVIDIA Nemotron Super (local vLLM)."""
+    chat_id = update.effective_chat.id
+    import config
+    from backends import reset_backend
+    from db import reset_session_id
+    if config.ENGINE_BACKEND != "vllm":
+        config.ENGINE_BACKEND = "vllm"
+        reset_backend()
+        reset_session_id(chat_id)
+    update_model(chat_id, "nemotron")
+    await update.message.reply_text("Switched to NVIDIA Nemotron Super (local).")
+
+
+@authorized
 async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show backend selection keyboard."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -195,6 +210,12 @@ async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return f"\u2713 {text}" if is_active else text
 
     keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                label("NVIDIA Nemotron Super", current == "vllm"),
+                callback_data="backend:vllm:nemotron",
+            ),
+        ],
         [
             InlineKeyboardButton(
                 label("Claude Sonnet", current == "claude_code" and current_model == "sonnet"),
@@ -285,6 +306,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/resume &lt;n&gt; — Restore archived session\n"
         "/status — Show current session info\n\n"
         "<b>Model Selection</b>\n"
+        "/nemotron — NVIDIA Nemotron Super (local)\n"
         "/opus — Switch to Claude Opus 4.6\n"
         "/sonnet — Switch to Claude Sonnet 4.6\n"
         "/backend — Choose engine (keyboard)\n"

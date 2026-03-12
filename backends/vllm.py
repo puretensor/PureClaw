@@ -1,4 +1,4 @@
-"""vLLM backend — OpenAI-compatible API for local models (Qwen3-235B-A22B NVFP4).
+"""vLLM backend — OpenAI-compatible API for NVIDIA Nemotron Super (local).
 
 Mirrors anthropic_api.py structure with OpenAI message format:
   - System prompt prepended per-request (not stored in history)
@@ -7,7 +7,7 @@ Mirrors anthropic_api.py structure with OpenAI message format:
     (model reasoning between tool rounds improves accuracy)
   - <think> stripped only for user-facing text and persistent DB history
   - Conversation history persisted in DB (session memory across turns)
-  - NVFP4 JSON safety: malformed tool call args trigger low-temperature retry
+  - Malformed tool call args trigger low-temperature retry
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ class VLLMBackend:
         return "vllm"
 
     def get_model_display(self, model: str) -> str:
-        return self._model
+        return "NVIDIA Nemotron Super (local)"
 
     @property
     def supports_streaming(self) -> bool:
@@ -211,9 +211,9 @@ class VLLMBackend:
                 messages=api_msgs,
                 tools=self._tools,
                 max_tokens=self._max_tokens,
-                temperature=0.3 if self._tools else 0.7,
-                top_p=0.8,
-                extra_body={"top_k": 20, "min_p": 0, "repetition_penalty": 1.05},
+                temperature=0.6 if self._tools else 0.8,
+                top_p=0.95,
+                extra_body={"top_k": 20, "min_p": 0},
                 timeout=min(timeout, self._total_timeout),
             )
 
@@ -279,9 +279,9 @@ class VLLMBackend:
                 messages=api_msgs,
                 tools=self._tools,
                 max_tokens=self._max_tokens,
-                temperature=0.3 if self._tools else 0.7,
-                top_p=0.8,
-                extra_body={"top_k": 20, "min_p": 0, "repetition_penalty": 1.05},
+                temperature=0.6 if self._tools else 0.8,
+                top_p=0.95,
+                extra_body={"top_k": 20, "min_p": 0},
                 timeout=self._total_timeout,
             )
 

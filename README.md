@@ -1,29 +1,46 @@
 # PureClaw
 
-**Your AI agent. Your hardware. Your rules.**
+**Agentic AI scaffolding powered by NVIDIA Nemotron Super — running on your own Blackwell GPUs.**
 
-PureClaw is a personal AI agent that lives in Telegram, Discord, and your inbox. It connects to whichever AI engine you choose — a local model on your own GPU, a cloud API, or a CLI agent like Claude Code. One bot, eight engines, no lock-in.
+PureClaw is an agentic AI system built around [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1), NVIDIA's premier agentic supermodel, served locally via [vLLM](https://github.com/vllm-project/vllm) on NVIDIA RTX PRO 6000 Blackwell GPUs. One agent, 19 tools, full tool calling, streaming responses, persistent memory — all running on your own hardware with zero cloud dependency.
+
+PureClaw connects through Telegram, Discord, and email. It ships with 8 swappable engine backends — NVIDIA Nemotron Super is the default and recommended engine. Cloud backends (Anthropic, OpenAI, Google) are available as fallbacks.
 
 [pureclaw.ai](https://pureclaw.ai) | [GitHub](https://github.com/puretensor/PureClaw)
 
 ---
 
+## Why NVIDIA Nemotron Super
+
+NVIDIA Nemotron Super is a 120B-parameter Mixture-of-Experts model (12B active) purpose-built for agentic workloads — tool calling, multi-step reasoning, and structured output. Running it locally on Blackwell GPUs gives you:
+
+- **Full agentic tool use** — native function calling with 19 built-in tools (shell, file ops, web search, subagents, memory)
+- **Zero latency to inference** — no network round-trips to cloud APIs, model runs on local VRAM
+- **No token costs** — unlimited inference on your own hardware
+- **No data leaves your network** — prompts, tool results, conversation history all stay local
+- **262K context window** — handles long conversations, large codebases, multi-document analysis
+- **Continuous batching via vLLM** — handles 32+ concurrent requests efficiently on dual RTX PRO 6000 (192GB VRAM)
+
+PureClaw is designed as an agentic scaffolding layer around Nemotron Super — the model handles reasoning and tool selection, PureClaw handles tool execution, conversation state, streaming, and multi-channel delivery.
+
+---
+
 ## What It Does
 
-You message your bot. PureClaw routes your message to whichever AI engine is active, streams the response back in real time, and gives the engine access to 19 built-in tools — shell commands, file operations, web search, phone calls, specialist agents, subagent parallelism, task tracking, and persistent memory.
+You message your bot. PureClaw routes your message to NVIDIA Nemotron Super (or whichever engine is active), streams the response back in real time, and gives the model access to 19 built-in tools — shell commands, file operations, web search, phone calls, specialist agents, subagent parallelism, task tracking, and persistent memory.
 
 Beyond conversation, PureClaw runs 16 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits), handles email with auto-reply for VIP senders and approve/reject drafts for everyone else, schedules reminders, compresses long conversations automatically, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
 
 ---
 
-## Choose Your Engine
+## Engine Backends
 
-Eight engines. Swap anytime with `/backend` or one line in `.env`.
+Eight engines. NVIDIA Nemotron Super is the default. Swap anytime with `/backend` or `/nemotron`.
 
 | Engine | Type | What It Is | Tools | Cost |
 |--------|------|-----------|-------|------|
-| **Ollama** (default) | Local | Any open model via [Ollama](https://ollama.com) | 19 built-in | Free |
-| **vLLM** | Local | [vLLM](https://github.com/vllm-project/vllm) OpenAI-compatible endpoint | 19 built-in | Free |
+| **NVIDIA Nemotron Super** (default) | Local GPU | [Nemotron Super 120B](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1) via vLLM on Blackwell GPUs | 19 built-in | Free |
+| **Ollama** | Local | Any open model via [Ollama](https://ollama.com) | 19 built-in | Free |
 | **Anthropic API** | Cloud API | Direct [Anthropic Messages API](https://docs.anthropic.com/en/docs/build-with-claude/overview) with prompt caching | 19 built-in | Pay per token |
 | **AWS Bedrock** | Cloud API | Claude via [AWS Bedrock](https://aws.amazon.com/bedrock/) Converse API | 19 built-in | Pay per token |
 | **Claude Code** | CLI Agent | Anthropic's [Claude Code](https://claude.ai/claude-code) CLI | Full agentic | Subscription |
@@ -33,13 +50,12 @@ Eight engines. Swap anytime with `/backend` or one line in `.env`.
 
 **Which should I pick?**
 
-- **Just want to try it?** Start with **Ollama**. It's free, runs on your machine, and works out of the box with any GGUF model.
-- **Want the best experience?** **AWS Bedrock** or **Anthropic API** give you Claude with full tool use, streaming, and prompt caching. PureClaw is developed and tested against these.
-- **Have a local vLLM setup?** The **vLLM** backend works with any OpenAI-compatible endpoint — Qwen, Llama, Mistral, etc.
-- **Want maximum capability?** **Hybrid** automatically routes simple queries to the fast API backend and complex tasks to Claude Code CLI.
-- **Already use a CLI agent?** **Claude Code**, **Codex**, and **Gemini** delegate tool execution to their own binaries.
+- **Best experience (recommended):** **NVIDIA Nemotron Super** via vLLM. Full agentic tool calling, streaming, 262K context, zero cost per token. Requires NVIDIA GPUs with sufficient VRAM (48GB+ recommended, 96GB+ ideal).
+- **No GPU?** Start with **Ollama**. It's free, runs CPU inference, and works out of the box.
+- **Want cloud fallback?** **Anthropic API** or **AWS Bedrock** give you Claude with full tool use and streaming.
+- **Maximum capability?** **Hybrid** routes simple queries to the fast API backend and complex tasks to Claude Code CLI.
 
-The API backends (Ollama, vLLM, Anthropic, Bedrock) use PureClaw's 19 built-in tools. The CLI backends (Claude Code, Codex, Gemini) bring their own sandboxes and tool execution. Hybrid uses both.
+The API backends (Nemotron/vLLM, Ollama, Anthropic, Bedrock) use PureClaw's 19 built-in tools. The CLI backends (Claude Code, Codex, Gemini) bring their own sandboxes and tool execution. Hybrid uses both.
 
 ---
 
@@ -79,7 +95,41 @@ AUTHORIZED_USER_ID=123456789
 Pick one (you can always add more later):
 
 <details>
-<summary><strong>Ollama (default, free, local)</strong></summary>
+<summary><strong>NVIDIA Nemotron Super (default, recommended)</strong></summary>
+
+**Requirements:** NVIDIA GPU with 48GB+ VRAM. Dual RTX PRO 6000 Blackwell (192GB total) is the reference configuration. Any NVIDIA GPU supported by vLLM will work — RTX 4090, A100, H100, etc.
+
+Install vLLM:
+```bash
+pip install vllm
+```
+
+Download and serve NVIDIA Nemotron Super:
+```bash
+vllm serve nvidia/nemotron-3-super \
+  --port 5000 \
+  --tensor-parallel-size 2 \
+  --max-model-len 262144 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes
+```
+
+Set it in `.env`:
+```bash
+ENGINE_BACKEND=vllm
+VLLM_URL=http://127.0.0.1:5000/v1
+VLLM_MODEL=nvidia/nemotron-3-super
+VLLM_MAX_TOKENS=32768
+```
+
+**That's it.** NVIDIA Nemotron Super is the default engine. PureClaw's vLLM backend handles tool calling, conversation history, streaming, and context compression automatically.
+
+For quantized variants (FP8, NVFP4) that fit in less VRAM, see the [NVIDIA NGC Catalog](https://catalog.ngc.nvidia.com/).
+
+</details>
+
+<details>
+<summary><strong>Ollama (free, local, no GPU required)</strong></summary>
 
 Install Ollama:
 ```bash
@@ -101,32 +151,10 @@ OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
 ```
 
-**That's it.** Ollama is the default — if you don't set `ENGINE_BACKEND` at all, PureClaw uses Ollama.
-
 </details>
 
 <details>
-<summary><strong>vLLM (local, OpenAI-compatible)</strong></summary>
-
-Install and start vLLM with your model:
-```bash
-pip install vllm
-vllm serve your-model-name --port 8200
-```
-
-Set it in `.env`:
-```bash
-ENGINE_BACKEND=vllm
-VLLM_URL=http://localhost:8200/v1
-VLLM_MODEL=your-model-name
-```
-
-Works with any model vLLM supports — Qwen, Llama, Mistral, etc.
-
-</details>
-
-<details>
-<summary><strong>Anthropic API (direct, pay per token)</strong></summary>
+<summary><strong>Anthropic API (cloud fallback, pay per token)</strong></summary>
 
 Get an API key from [console.anthropic.com](https://console.anthropic.com/).
 
@@ -171,17 +199,12 @@ Authenticate (opens a browser):
 claude login
 ```
 
-Verify it works:
-```bash
-claude -p "Say hello"
-```
-
 Set it in `.env`:
 ```bash
 ENGINE_BACKEND=claude_code
 ```
 
-Claude Code uses your Anthropic subscription (Max plan). No API key needed — authentication is handled by the CLI.
+Claude Code uses your Anthropic subscription (Max plan). No API key needed.
 
 </details>
 
@@ -191,16 +214,6 @@ Claude Code uses your Anthropic subscription (Max plan). No API key needed — a
 Install the Codex CLI:
 ```bash
 npm install -g @openai/codex
-```
-
-Set your OpenAI API key as an environment variable:
-```bash
-export OPENAI_API_KEY=sk-proj-your-key-here
-```
-
-Verify it works:
-```bash
-codex exec "Say hello" --json --dangerously-bypass-approvals-and-sandbox
 ```
 
 Set it in `.env`:
@@ -220,14 +233,9 @@ Install the Gemini CLI:
 npm install -g @google/gemini-cli
 ```
 
-Authenticate (opens a browser):
+Authenticate:
 ```bash
 gemini auth
-```
-
-Verify it works:
-```bash
-gemini -p "Say hello" --output-format json --yolo
 ```
 
 Set it in `.env`:
@@ -240,14 +248,11 @@ ENGINE_BACKEND=gemini_cli
 <details>
 <summary><strong>Hybrid (API + CLI, advanced)</strong></summary>
 
-The hybrid backend routes between a fast API backend (Gemini) and a powerful CLI backend (Claude Code). Simple queries go to the API; complex multi-step tasks are handed to the CLI.
+Routes between a fast API backend (Gemini) and a powerful CLI backend (Claude Code).
 
-Configure both backends, then:
 ```bash
 ENGINE_BACKEND=hybrid
 HYBRID_DEFAULT=api
-HYBRID_CLI_TIMEOUT=1800
-HYBRID_API_TIMEOUT=300
 ```
 
 </details>
@@ -258,7 +263,7 @@ HYBRID_API_TIMEOUT=300
 python3 nexus.py
 ```
 
-Open your bot in Telegram and send a message. You should see a streaming response.
+Open your bot in Telegram and send a message. You should see a streaming response from NVIDIA Nemotron Super.
 
 ### 7. Production deployment
 
@@ -323,11 +328,11 @@ bash k8s/deploy.sh
 
 | Command | What it does |
 |---------|-------------|
+| `/nemotron` | Quick-switch to NVIDIA Nemotron Super (local) |
 | `/backend` | Tap to select from all available engines |
 | `/sonnet` | Quick-switch to Claude Sonnet |
 | `/opus` | Quick-switch to Claude Opus |
-| `/haiku` | Quick-switch to Claude Haiku |
-| `/ollama` | Quick-switch to local model |
+| `/ollama` | Quick-switch to local Ollama model |
 
 ### Memory
 
@@ -398,11 +403,11 @@ Instant structured responses that bypass the AI engine for speed. No tokens used
 
 ### Streaming Responses
 
-Responses stream in real time — you see the text appear word by word in Telegram and Discord, just like ChatGPT's interface. Tool usage (file reads, shell commands, web searches) shows live status updates.
+Responses stream in real time — you see the text appear word by word in Telegram and Discord. Tool usage (file reads, shell commands, web searches) shows live status updates. NVIDIA Nemotron Super's streaming is served directly from local vLLM — no cloud API latency.
 
 ### Tool Use
 
-When using API backends (Ollama, vLLM, Anthropic, Bedrock), PureClaw provides 19 built-in tools:
+When using API backends (Nemotron/vLLM, Ollama, Anthropic, Bedrock), PureClaw provides 19 built-in tools:
 
 | Tool | What it does |
 |------|-------------|
@@ -426,7 +431,9 @@ When using API backends (Ollama, vLLM, Anthropic, Bedrock), PureClaw provides 19
 | `read_memory` | Read from memory files or search across all |
 | `list_memory` | List all memory files and their sizes |
 
-The CLI engines (Claude Code, Codex, Gemini) bring their own tools — they handle file operations, code execution, and web search through their own sandboxed environments. The Hybrid backend uses both.
+NVIDIA Nemotron Super excels at tool calling — its MoE architecture was specifically trained for agentic workloads with multi-step tool use, making it the ideal model for PureClaw's tool loop.
+
+The CLI engines (Claude Code, Codex, Gemini) bring their own tools — they handle file operations, code execution, and web search through their own sandboxed environments.
 
 ### Plan Mode & Subagents
 
@@ -459,9 +466,9 @@ PureClaw monitors your IMAP inboxes and classifies each incoming message into on
 | **auto_reply** | AI drafts and sends a reply immediately (VIP senders only) |
 | **followup** | Tracked for follow-up reminders |
 
-**Auto-reply** fires only for whitelisted VIP domains and must pass 11 gates before anything sends: primary account, not self-addressed, not a workflow email, not previously seen (Message-ID + content hash), under 24 hours old, not a terminal one-liner, classifier match, no duplicate reply, sender rate < 3/hour, and a non-empty engine response. See `channels/email_in.py` for the full gate list.
+**Auto-reply** fires only for whitelisted VIP domains and must pass 11 gates before anything sends. See `channels/email_in.py` for the full gate list.
 
-**Draft queue** is available for messages that need human approval — you get Telegram notifications with [Approve] / [Reject] buttons, and nothing sends until you tap. But VIP auto-replies bypass this queue by design.
+**Draft queue** is available for messages that need human approval — you get Telegram notifications with [Approve] / [Reject] buttons, and nothing sends until you tap.
 
 ### Context Compression
 
@@ -470,7 +477,7 @@ Long conversations are compressed automatically to stay within model context lim
 - **Tier 1: Tool result truncation** — Old tool results are summarized to save tokens (zero cost, always active)
 - **Tier 2: LLM summarization** — When token count exceeds a threshold, older messages are replaced with an LLM-generated summary while preserving recent messages
 
-Configurable via `COMPRESS_TRIGGER_TOKENS`, `PRESERVE_RECENT_MESSAGES`, and `SUMMARY_MODEL`.
+NVIDIA Nemotron Super's 262K context window means compression triggers far less frequently than with smaller-context models.
 
 ### Voice
 
@@ -478,7 +485,7 @@ Send voice notes in Telegram — they're transcribed via Whisper and processed b
 
 ### Health Probes
 
-Background health checking for dependent services (Whisper, TTS). Services are marked offline after consecutive failures, online after one success. Telegram voice handlers use this for graceful failover.
+Background health checking for dependent services (Whisper, TTS). Services are marked offline after consecutive failures, online after one success.
 
 ---
 
@@ -507,14 +514,6 @@ Background tasks that run on cron schedules inside the PureClaw process. No exte
 | Git Push | Always on | Webhook listener for git push event summaries |
 | Darwin Consumer | Always on | Real-time UK rail data processing (Kafka) |
 
-### Available but Disabled
-
-| Observer | Why disabled |
-|----------|-------------|
-| Node Health | Alerting handled by Alertmanager |
-| Alertmanager Monitor | Alerts suppressed from agent interface |
-| Intel Briefing | Replaced by Intel Deep Analysis |
-
 Observers are optional — they run if configured but won't break anything if their dependencies aren't set up.
 
 ---
@@ -525,8 +524,8 @@ Observers are optional — they run if configured but won't break anything if th
 nexus.py (entry point)
   |
   +-- Engine (backends/)
+  |     +-- vllm              NVIDIA Nemotron Super via vLLM (default)
   |     +-- ollama             Local models via Ollama API
-  |     +-- vllm              Local models via OpenAI-compatible API
   |     +-- anthropic_api      Direct Anthropic Messages API (prompt caching)
   |     +-- bedrock_api        Claude via AWS Bedrock Converse API
   |     +-- claude_code        Claude Code CLI agent
@@ -567,7 +566,19 @@ All configuration is in `.env`. Only two values are required.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENGINE_BACKEND` | `ollama` | Which engine: `ollama`, `vllm`, `anthropic_api`, `bedrock_api`, `claude_code`, `codex_cli`, `gemini_cli`, `hybrid` |
+| `ENGINE_BACKEND` | `vllm` | Which engine: `vllm`, `ollama`, `anthropic_api`, `bedrock_api`, `claude_code`, `codex_cli`, `gemini_cli`, `hybrid` |
+
+### NVIDIA Nemotron Super / vLLM (default)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VLLM_URL` | `http://127.0.0.1:5000/v1` | vLLM OpenAI-compatible endpoint |
+| `VLLM_MODEL` | `nvidia/nemotron-3-super` | Model name (Nemotron Super by default) |
+| `VLLM_TOOLS_ENABLED` | `true` | Enable/disable tool use |
+| `VLLM_TOOL_MAX_ITER` | `10` | Max tool call iterations per response |
+| `VLLM_TOOL_TIMEOUT` | `60` | Per-tool-call timeout (seconds) |
+| `VLLM_TOTAL_TIMEOUT` | `300` | Total request timeout (seconds) |
+| `VLLM_MAX_TOKENS` | `32768` | Max tokens per response |
 
 ### Ollama
 
@@ -579,18 +590,6 @@ All configuration is in `.env`. Only two values are required.
 | `OLLAMA_TOOL_MAX_ITER` | `25` | Max tool call iterations per response |
 | `OLLAMA_TOOL_TIMEOUT` | `30` | Per-tool-call timeout (seconds) |
 | `OLLAMA_NUM_PREDICT` | `8192` | Max tokens per response |
-
-### vLLM
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VLLM_URL` | `http://localhost:8200/v1` | vLLM OpenAI-compatible endpoint |
-| `VLLM_MODEL` | (your model path) | Model name or path |
-| `VLLM_TOOLS_ENABLED` | `true` | Enable/disable tool use |
-| `VLLM_TOOL_MAX_ITER` | `10` | Max tool call iterations per response |
-| `VLLM_TOOL_TIMEOUT` | `60` | Per-tool-call timeout (seconds) |
-| `VLLM_TOTAL_TIMEOUT` | `300` | Total request timeout (seconds) |
-| `VLLM_MAX_TOKENS` | `8192` | Max tokens per response |
 
 ### Anthropic API
 
@@ -684,6 +683,42 @@ AWS credentials are read from standard sources (`~/.aws/credentials`, env vars, 
 
 ---
 
+## NVIDIA GPU Configuration
+
+### Reference Setup (PureTensor Infrastructure)
+
+| Component | Specification |
+|-----------|--------------|
+| **GPU** | 2x NVIDIA RTX PRO 6000 Blackwell (96GB VRAM each, 192GB total) |
+| **CPU** | AMD Threadripper PRO 9975WX 32C/64T |
+| **RAM** | 512GB DDR5-4800 ECC |
+| **Storage** | 2x Samsung 9100 PRO 4TB Gen5 NVMe RAID0 (29 GB/s read) |
+| **Model** | NVIDIA Nemotron Super 120B-A12B (NVFP4 quantization) |
+| **Serving** | vLLM with tensor parallelism across both GPUs |
+
+### Minimum Requirements
+
+| Configuration | GPU | VRAM | Model Variant |
+|--------------|-----|------|---------------|
+| Entry | RTX 4090 (24GB) | 24GB | Nemotron Super NVFP4 (fits in ~20GB) |
+| Recommended | RTX 5090 / A100 (48-80GB) | 48-80GB | Nemotron Super FP8 |
+| Production | 2x RTX PRO 6000 Blackwell | 192GB | Nemotron Super FP16/BF16 (full precision) |
+
+### vLLM Service Configuration
+
+```bash
+# systemd service example (vllm-nemotron.service)
+vllm serve nvidia/nemotron-3-super \
+  --port 5000 \
+  --tensor-parallel-size 2 \
+  --max-model-len 262144 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --gpu-memory-utilization 0.95
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -699,8 +734,8 @@ PureClaw/
 |
 +-- backends/
 |     +-- base.py               Backend Protocol definition
+|     +-- vllm.py               NVIDIA Nemotron Super via vLLM (default)
 |     +-- ollama.py             Ollama backend with tool loop
-|     +-- vllm.py               vLLM OpenAI-compatible backend
 |     +-- anthropic_api.py      Anthropic Messages API backend
 |     +-- bedrock_api.py        AWS Bedrock Converse API backend
 |     +-- claude_code.py        Claude Code CLI backend
@@ -715,7 +750,7 @@ PureClaw/
 |     +-- discord/              Discord bot handlers and streaming
 |     +-- email_in.py           IMAP polling email input
 |
-+-- observers/                  17 background observers (cron + persistent)
++-- observers/                  16 background observers (cron + persistent)
 +-- dispatcher/                 Data cards (weather, markets, trains, nodes)
 +-- drafts/                     Email draft queue with approve/reject
 +-- handlers/                   Telegram handlers (voice, photo, document, location)
@@ -744,7 +779,7 @@ python3 -m pytest tests/ -v
 
 - Python 3.11+
 - A Telegram bot token
-- At least one engine: Ollama installed, a vLLM endpoint, an API key, or a CLI tool authenticated
+- At least one engine: NVIDIA GPU with vLLM, Ollama installed, an API key, or a CLI tool authenticated
 
 ### Python Dependencies
 
@@ -776,6 +811,7 @@ pandas>=2.0.0
 
 ### System Dependencies (optional)
 
+- **NVIDIA GPU + CUDA** — Required for vLLM / Nemotron Super (recommended)
 - **ffmpeg** — Required for voice output
 - **ripgrep** — Used by the `grep` tool (falls back to Python regex if absent)
 - **Node.js 18+** — Required for CLI engines (claude, codex, gemini) and document generation skills
@@ -788,11 +824,22 @@ pandas>=2.0.0
 
 - **Single-user only** — locked to one Telegram/Discord user ID
 - **No telemetry** — no analytics, no tracking, no phoning home
-- **No cloud dependency** — Ollama and vLLM keep everything local; cloud backends use your own keys/subscriptions
+- **No cloud dependency** — NVIDIA Nemotron Super + vLLM keeps everything local; cloud backends use your own keys/subscriptions
 - **Gated email replies** — VIP auto-replies pass 11 safety gates; all other drafts require explicit Telegram approval before sending
 - **Plan mode** — AI can self-restrict to read-only exploration before making changes
 - **Git security auditing** — automated scanning for secrets and sensitive data in repos
-- **Your hardware** — not a managed platform, not a SaaS product
+- **Your hardware, your data** — inference runs on your NVIDIA GPUs, nothing leaves your network
+
+---
+
+## Built With
+
+- [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1) — agentic supermodel
+- [vLLM](https://github.com/vllm-project/vllm) — high-throughput model serving
+- [NVIDIA RTX PRO 6000 Blackwell](https://www.nvidia.com/en-us/design-visualization/rtx-pro-6000/) — inference hardware
+- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) — Telegram integration
+- [discord.py](https://github.com/Rapptz/discord.py) — Discord integration
+- [OpenAI Python SDK](https://github.com/openai/openai-python) — vLLM client (OpenAI-compatible API)
 
 ---
 

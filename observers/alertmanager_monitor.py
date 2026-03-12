@@ -24,7 +24,9 @@ class AlertmanagerMonitorObserver(Observer):
     name = "alertmanager_monitor"
     schedule = "*/5 * * * *"
 
-    STATE_DIR = Path(__file__).parent / ".state"
+    STATE_DIR = Path(
+        os.environ.get("OBSERVER_STATE_DIR", str(Path(__file__).parent / ".state"))
+    )
     SEEN_FILE = STATE_DIR / "alertmanager_seen.json"
 
     def _load_seen(self) -> dict:

@@ -24,6 +24,7 @@ import email.utils
 import imaplib
 import json
 import logging
+import os
 from pathlib import Path
 
 from observers.base import Observer, ObserverResult
@@ -39,7 +40,9 @@ class EmailDigestObserver(Observer):
 
     # Paths relative to this file
     OBSERVER_DIR = Path(__file__).parent
-    STATE_DIR = OBSERVER_DIR / ".state"
+    STATE_DIR = Path(
+        os.environ.get("OBSERVER_STATE_DIR", str(OBSERVER_DIR / ".state"))
+    )
     ACCOUNTS_FILE = OBSERVER_DIR / "email_accounts.json"
     SEEN_FILE = STATE_DIR / "email_seen.json"
 
