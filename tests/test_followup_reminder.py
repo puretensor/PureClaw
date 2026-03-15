@@ -45,7 +45,7 @@ class TestFollowupReminderObserver:
 
     def test_schedule(self):
         obs = FollowupReminderObserver()
-        assert obs.schedule == "0 9 * * 1-5"
+        assert obs.schedule == "0 9 * * 0-4"  # 0=Mon in Python weekday()
 
     @patch("observers.base.urllib.request.urlopen")
     def test_reminds_overdue_followup(self, mock_urlopen):

@@ -299,7 +299,7 @@ class TestOllamaBackend:
             req = mock_urlopen.call_args[0][0]
             payload = json.loads(req.data.decode())
             assert "tools" in payload
-            assert len(payload["tools"]) == 7
+            assert len(payload["tools"]) == 19
 
     def test_call_sync_no_tools_when_disabled(self):
         """call_sync should not include tools when disabled."""
@@ -609,15 +609,16 @@ class TestCodexCLIBackend:
         backend = CodexCLIBackend()
         assert backend.supports_tools is True
 
-    def test_no_sessions(self):
+    def test_supports_sessions(self):
         backend = CodexCLIBackend()
-        assert backend.supports_sessions is False
+        assert backend.supports_sessions is True
 
     def test_call_sync_not_found(self):
         """call_sync should handle missing binary gracefully."""
         backend = CodexCLIBackend()
 
-        with patch("backends.codex_cli.subprocess.run", side_effect=FileNotFoundError):
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run", side_effect=FileNotFoundError):
             result = backend.call_sync("test")
 
         assert "not found" in result["result"].lower()
@@ -630,7 +631,8 @@ class TestCodexCLIBackend:
         mock_result.stdout = json.dumps({"type": "message", "role": "assistant", "content": "ok"})
         mock_result.stderr = ""
 
-        with patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
             backend.call_sync("test prompt")
             cmd = mock_run.call_args[0][0]
             assert cmd[1] == "exec"
@@ -643,7 +645,8 @@ class TestCodexCLIBackend:
         mock_result.stdout = json.dumps({"type": "message", "role": "assistant", "content": "ok"})
         mock_result.stderr = ""
 
-        with patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
             backend.call_sync("test prompt")
             cmd = mock_run.call_args[0][0]
             assert "--json" in cmd
@@ -660,7 +663,8 @@ class TestCodexCLIBackend:
         )
         mock_result.stderr = ""
 
-        with patch("backends.codex_cli.subprocess.run", return_value=mock_result):
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run", return_value=mock_result):
             result = backend.call_sync("test prompt")
 
         assert result["result"] == "Hello from Codex"
@@ -671,7 +675,8 @@ class TestCodexCLIBackend:
         import subprocess
         backend = CodexCLIBackend()
 
-        with patch("backends.codex_cli.subprocess.run",
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run",
                     side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
             result = backend.call_sync("test", timeout=300)
 
@@ -685,57 +690,64 @@ class TestCodexCLIBackend:
         mock_result.stderr = "something went wrong"
         mock_result.stdout = ""
 
-        with patch("backends.codex_cli.subprocess.run", return_value=mock_result):
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run", return_value=mock_result):
             result = backend.call_sync("test")
 
         assert "error" in result["result"].lower()
 
     def test_call_sync_passes_system_prompt(self):
-        """call_sync should inject system_prompt into the prompt sent to CLI."""
+        """call_sync should write system_prompt via _write_instructions (AGENTS.md)."""
         backend = CodexCLIBackend()
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = json.dumps({"type": "message", "role": "assistant", "content": "ok"})
         mock_result.stderr = ""
 
-        with patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
+        with patch.object(backend, "_write_instructions") as mock_write, \
+             patch("backends.codex_cli.subprocess.run", return_value=mock_result):
             backend.call_sync("hello", system_prompt="You are PureClaw", memory_context="infra notes")
-            cmd = mock_run.call_args[0][0]
-            # The prompt is the 3rd arg (after "exec")
-            prompt_arg = cmd[2]
-            assert "<system>" in prompt_arg
-            assert "You are PureClaw" in prompt_arg
-            assert "infra notes" in prompt_arg
-            assert "hello" in prompt_arg
+            mock_write.assert_called_once_with("You are PureClaw", "infra notes")
 
     def test_call_sync_no_system_prompt(self):
-        """call_sync should pass bare prompt when no system_prompt."""
+        """call_sync should pass bare prompt as positional arg when no system_prompt."""
         backend = CodexCLIBackend()
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = json.dumps({"type": "message", "role": "assistant", "content": "ok"})
         mock_result.stderr = ""
 
-        with patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
+        with patch.object(backend, "_write_instructions"), \
+             patch("backends.codex_cli.subprocess.run", return_value=mock_result) as mock_run:
             backend.call_sync("hello")
             cmd = mock_run.call_args[0][0]
             prompt_arg = cmd[2]
             assert prompt_arg == "hello"
-            assert "<system>" not in prompt_arg
 
-    def test_build_prompt_helper(self):
-        """_build_prompt should wrap context in <system> tags."""
+    def test_write_instructions_writes_agents_md(self):
+        """_write_instructions should write system_prompt and memory to AGENTS.md."""
+        import tempfile, os
         backend = CodexCLIBackend()
-        result = backend._build_prompt("user msg", system_prompt="sys", memory_context="mem")
-        assert result.startswith("<system>")
-        assert "sys" in result
-        assert "mem" in result
-        assert result.endswith("user msg")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("config.CODEX_CWD", tmpdir):
+                backend._write_instructions("sys prompt", "memory context")
+            agents_path = os.path.join(tmpdir, "AGENTS.md")
+            with open(agents_path) as f:
+                content = f.read()
+            assert "sys prompt" in content
+            assert "memory context" in content
 
-    def test_build_prompt_no_context(self):
-        """_build_prompt should return bare message when no context."""
+    def test_write_instructions_empty(self):
+        """_write_instructions should write empty file when no context."""
+        import tempfile, os
         backend = CodexCLIBackend()
-        assert backend._build_prompt("hello") == "hello"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("config.CODEX_CWD", tmpdir):
+                backend._write_instructions()
+            agents_path = os.path.join(tmpdir, "AGENTS.md")
+            with open(agents_path) as f:
+                content = f.read()
+            assert content == ""
 
 
 # (API backend tests removed — only CLI + Ollama backends supported)

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -28,6 +29,12 @@ with patch.dict("os.environ", {
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _recent_date_raw():
+    """Return an RFC 2822 date string for right now (always within the 24h age gate)."""
+    from email.utils import format_datetime
+    return format_datetime(datetime.now(timezone.utc))
 
 
 @pytest.fixture(autouse=True)
@@ -147,7 +154,7 @@ class TestEmailInputChannel:
             "from_addr": "random@company.com",
             "subject": "Meeting next week",
             "date": "Feb 10 14:00",
-            "date_raw": "Tue, 03 Mar 2026 14:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "user@test.com",
             "body": "Hi, can we schedule a meeting?",
         }
@@ -184,7 +191,7 @@ class TestEmailInputChannel:
             "from_addr": "person@company.com",
             "subject": "Old message",
             "date": "Feb 10 10:00",
-            "date_raw": "Mon, 10 Feb 2026 10:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "user@test.com",
             "body": "Old content",
         }
@@ -223,7 +230,7 @@ class TestEmailInputChannel:
             "from_addr": "noreply@spammer.com",
             "subject": "Buy our stuff",
             "date": "Feb 10 12:00",
-            "date_raw": "Tue, 03 Mar 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "user@test.com",
             "body": "Spam content",
         }
@@ -262,7 +269,7 @@ class TestEmailInputChannel:
             "from_addr": "vip-user@example.com",
             "subject": "Report feedback",
             "date": "Feb 10 09:00",
-            "date_raw": "Tue, 03 Mar 2026 09:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "hal@example.com",
             "body": "Hi PureClaw, the latest report was excellent. Can you update the analysis?",
         }

@@ -121,7 +121,8 @@ class TestApproveDraft:
             draft_body="Here is my reply.",
         )
 
-        with patch("drafts.queue.subprocess.run") as mock_run:
+        with patch("drafts.queue.GMAIL_SCRIPT", MagicMock(exists=MagicMock(return_value=True))), \
+             patch("drafts.queue.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="Sent: ok", stderr="")
             success, msg = approve_draft(draft_id)
 
@@ -231,7 +232,8 @@ class TestSendDraft:
         from db import update_draft_status
         update_draft_status(draft_id, "approved")
 
-        with patch("drafts.queue.subprocess.run") as mock_run:
+        with patch("drafts.queue.GMAIL_SCRIPT", MagicMock(exists=MagicMock(return_value=True))), \
+             patch("drafts.queue.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=1, stdout="", stderr="Auth error"
             )
@@ -252,7 +254,8 @@ class TestSendDraft:
         from db import update_draft_status
         update_draft_status(draft_id, "approved")
 
-        with patch("drafts.queue.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 30)):
+        with patch("drafts.queue.GMAIL_SCRIPT", MagicMock(exists=MagicMock(return_value=True))), \
+             patch("drafts.queue.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 30)):
             success, msg = send_draft(draft_id)
 
         assert success is False

@@ -262,6 +262,7 @@ class TestFetchDiff:
             "AUTHORIZED_USER_ID": "12345",
         }):
             self.obs = GitPushObserver()
+            self.obs.GITEA_URL = "http://gitea.local"
 
     @patch("observers.git_push.urllib.request.urlopen")
     def test_truncation(self, mock_urlopen):

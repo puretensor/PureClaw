@@ -590,6 +590,7 @@ class TestPureClawSystemPrompt:
 
     def test_system_prompt_contains_key_directives(self):
         """System prompt should contain essential personality directives."""
-        assert "Direct" in _system_prompt
-        assert "concise" in _system_prompt
-        assert "tensor-core" in _system_prompt
+        prompt_lower = _system_prompt.lower()
+        assert "direct" in prompt_lower
+        assert "concise" in prompt_lower
+        assert "tensor-core" in prompt_lower

@@ -60,11 +60,13 @@ class TestCalendarCommand:
         assert "not configured" in text.lower()
 
     @pytest.mark.asyncio
-    async def test_calendar_today_success(self, monkeypatch):
+    async def test_calendar_today_success(self, monkeypatch, tmp_path):
         """Successful calendar fetch should show events."""
+        fake_script = tmp_path / "gcalendar.py"
+        fake_script.write_text("# fake")
         monkeypatch.setattr(
             "channels.telegram.commands.GCALENDAR_SCRIPT",
-            Path.home() / ".config" / "puretensor" / "gcalendar.py",
+            fake_script,
         )
 
         mock_result = MagicMock(
@@ -83,11 +85,13 @@ class TestCalendarCommand:
         assert "Meeting with Alan" in result_text
 
     @pytest.mark.asyncio
-    async def test_calendar_week_arg(self, monkeypatch):
+    async def test_calendar_week_arg(self, monkeypatch, tmp_path):
         """Passing 'week' as argument should fetch weekly view."""
+        fake_script = tmp_path / "gcalendar.py"
+        fake_script.write_text("# fake")
         monkeypatch.setattr(
             "channels.telegram.commands.GCALENDAR_SCRIPT",
-            Path.home() / ".config" / "puretensor" / "gcalendar.py",
+            fake_script,
         )
 
         mock_result = MagicMock(returncode=0, stdout="This week:\nNo events", stderr="")
@@ -101,11 +105,13 @@ class TestCalendarCommand:
         assert "week" in call_args
 
     @pytest.mark.asyncio
-    async def test_calendar_invalid_arg_defaults_today(self, monkeypatch):
+    async def test_calendar_invalid_arg_defaults_today(self, monkeypatch, tmp_path):
         """Invalid arg should default to 'today'."""
+        fake_script = tmp_path / "gcalendar.py"
+        fake_script.write_text("# fake")
         monkeypatch.setattr(
             "channels.telegram.commands.GCALENDAR_SCRIPT",
-            Path.home() / ".config" / "puretensor" / "gcalendar.py",
+            fake_script,
         )
 
         mock_result = MagicMock(returncode=0, stdout="Today: No events", stderr="")

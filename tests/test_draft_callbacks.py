@@ -69,7 +69,8 @@ class TestDraftApproveCallback:
 
         update, ctx = _make_callback_update(f"draft:approve:{draft_id}")
 
-        with patch("drafts.queue.subprocess.run") as mock_run:
+        with patch("drafts.queue.GMAIL_SCRIPT", MagicMock(exists=MagicMock(return_value=True))), \
+             patch("drafts.queue.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="Sent: ok", stderr="")
             await handle_callback(update, ctx)
 

@@ -11,6 +11,7 @@ Covers:
 
 import sys
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -48,6 +49,12 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr("drafts.queue.AUTHORIZED_USER_ID", 12345)
     init_db()
     yield db_file
+
+
+def _recent_date_raw():
+    """Return an RFC 2822 date string for ~5 minutes ago (always within the 24h age gate)."""
+    from email.utils import format_datetime
+    return format_datetime(datetime.now(timezone.utc))
 
 
 @pytest.fixture
@@ -138,7 +145,7 @@ class TestPollOnceClassification:
             "from_addr": "noreply@example.com",
             "subject": "Your order shipped",
             "date": "Feb 10 12:00",
-            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "ops@puretensor.ai",
             "body": "Your package is on the way.",
         }
@@ -163,7 +170,7 @@ class TestPollOnceClassification:
             "from_addr": "receipts@stripe.com",
             "subject": "Payment receipt",
             "date": "Feb 10 12:00",
-            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "ops@puretensor.ai",
             "body": "You received a payment of $100.",
         }
@@ -193,7 +200,7 @@ class TestPollOnceClassification:
             "from_addr": "vip-user@example.com",
             "subject": "Report feedback",
             "date": "Feb 10 12:00",
-            "date_raw": "Tue, 03 Mar 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "hal@example.com",
             "body": "The report looks good, please update section 3.",
         }
@@ -235,7 +242,7 @@ class TestPollOnceClassification:
             "from_addr": "ops@puretensor.ai",
             "subject": "Server question",
             "date": "Feb 10 12:00",
-            "date_raw": "Tue, 03 Mar 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "hal@example.com",
             "body": "What is the status of tensor-core?",
         }
@@ -276,7 +283,7 @@ class TestDeduplication:
             "from_addr": "receipts@stripe.com",
             "subject": "Payment receipt",
             "date": "Feb 10 12:00",
-            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "ops@puretensor.ai",
             "body": "Payment.",
         }
@@ -301,7 +308,7 @@ class TestDeduplication:
             "from_addr": "billing@provider.com",
             "subject": "Your invoice",
             "date": "Feb 10 12:00",
-            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "ops@puretensor.ai",
             "body": "Invoice attached.",
         }
@@ -380,7 +387,7 @@ class TestNotificationFormatting:
             "from_addr": "security@bank.com",
             "subject": "Activity alert",
             "date": "Feb 10 14:30",
-            "date_raw": "Tue, 03 Mar 2026 14:30:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "ops@puretensor.ai",
             "body": "Unusual login detected from a new device.",
         }
@@ -404,7 +411,7 @@ class TestNotificationFormatting:
             "from_addr": "billing@provider.com",
             "subject": "Invoice",
             "date": "Feb 10 12:00",
-            "date_raw": "Mon, 10 Feb 2026 12:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "ops@puretensor.ai",
             "body": "Invoice attached.",
         }
@@ -467,7 +474,7 @@ class TestEmailSessions:
             "from_addr": "vip-user@example.com",
             "subject": "Quick question",
             "date": "Mar 02 10:00",
-            "date_raw": "Tue, 03 Mar 2026 10:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "hal@example.com",
             "body": "Hey HAL, what's the cluster status?",
         }
@@ -510,7 +517,7 @@ class TestEmailSessions:
             "from_addr": "ops@puretensor.ai",
             "subject": "First question",
             "date": "Mar 02 10:00",
-            "date_raw": "Tue, 03 Mar 2026 10:00:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "hal@example.com",
             "body": "How's the GPU utilisation?",
         }
@@ -520,7 +527,7 @@ class TestEmailSessions:
             "from_addr": "ops@puretensor.ai",
             "subject": "Follow-up",
             "date": "Mar 02 10:05",
-            "date_raw": "Tue, 03 Mar 2026 10:05:00 +0000",
+            "date_raw": _recent_date_raw(),
             "to": "hal@example.com",
             "body": "And what about memory usage?",
         }
