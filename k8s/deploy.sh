@@ -16,7 +16,7 @@ set -euo pipefail
 NEXUS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FOX_N1="${FOX_N1:-root@fox-n1}"
 BUILD_DIR="/tmp/nexus-build"
-VERSION="v2.0.0"
+VERSION="v2.1.0"
 
 echo "=== Nexus K8s Deploy ==="
 echo "Source: $NEXUS_DIR"
@@ -131,6 +131,10 @@ else
 fi
 ssh "$FOX_N1" "kubectl -n nexus create configmap claude-context \
   --from-file=CLAUDE.md=/tmp/nexus-claude-md && rm /tmp/nexus-claude-md"
+
+# Security policy ConfigMap
+scp "$NEXUS_DIR/k8s/security-policy-configmap.yaml" "$FOX_N1:/tmp/nexus-secpol.yaml"
+ssh "$FOX_N1" "kubectl apply -f /tmp/nexus-secpol.yaml"
 
 # PVCs
 scp "$NEXUS_DIR/k8s/pvcs.yaml" "$FOX_N1:/tmp/nexus-pvcs.yaml"
