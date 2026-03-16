@@ -377,6 +377,11 @@ class AnthropicAPIBackend:
         messages = history + [{"role": "user", "content": prompt}]
 
         def send_request(msgs):
+            try:
+                from security.redact import redact_history
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             kwargs = dict(
                 model=model_id,
                 max_tokens=self._max_tokens,

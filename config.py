@@ -133,6 +133,9 @@ COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"
 PRESERVE_RECENT_MESSAGES = int(os.environ.get("PRESERVE_RECENT_MESSAGES", "40"))
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-2.0-flash")
 
+# Security policy
+SECURITY_POLICY_PATH = os.environ.get("SECURITY_POLICY_PATH", "")
+
 # Paths
 DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent / "nexus.db")))
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "nexus_system_prompt.md"
@@ -148,8 +151,23 @@ if SYSTEM_PROMPT_PATH.exists():
     _system_prompt = SYSTEM_PROMPT_PATH.read_text().strip()
 
 # Apply agent identity template substitution
+_ENGINE_DISPLAY = {
+    "vllm": f"NVIDIA Nemotron Super 120B ({VLLM_MODEL})",
+    "ollama": f"Ollama ({OLLAMA_MODEL})",
+    "anthropic_api": f"Claude ({ANTHROPIC_MODEL})",
+    "bedrock_api": f"Claude via Bedrock ({BEDROCK_MODEL})",
+    "gemini_api": f"Gemini ({GEMINI_MODEL})",
+    "claude_code": "Claude Code (CLI)",
+    "codex_cli": "OpenAI Codex (CLI)",
+    "gemini_cli": "Gemini (CLI)",
+}
+
 if _system_prompt:
     _system_prompt = _system_prompt.replace("{agent_name}", AGENT_NAME)
+    _system_prompt = _system_prompt.replace(
+        "{engine_model}",
+        _ENGINE_DISPLAY.get(ENGINE_BACKEND, ENGINE_BACKEND),
+    )
     if AGENT_PERSONALITY:
         _system_prompt = _system_prompt.replace(
             "{agent_personality_block}",

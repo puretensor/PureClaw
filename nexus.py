@@ -73,6 +73,10 @@ async def main():
     # Initialize database
     init_db()
 
+    # Load security policy (after DB, before channels)
+    from security.policy import load_policy, PolicyWatcher
+    load_policy()
+
     # Import here to ensure config/db are ready
     from channels.telegram import TelegramChannel
     from channels.email_in import EmailInputChannel
@@ -121,6 +125,10 @@ async def main():
     from health_probes import get_probe
     health_probe_task = asyncio.create_task(get_probe().run_loop())
 
+    # Start security policy hot-reload watcher
+    policy_watcher = PolicyWatcher()
+    policy_watcher_task = asyncio.create_task(policy_watcher.watch_loop())
+
     try:
         # Start Telegram channel
         await telegram.start()
@@ -162,6 +170,12 @@ async def main():
         log.info("Keyboard interrupt received")
     finally:
         log.info("NEXUS shutting down...")
+        policy_watcher.stop()
+        policy_watcher_task.cancel()
+        try:
+            await policy_watcher_task
+        except asyncio.CancelledError:
+            pass
         health_probe_task.cancel()
         try:
             await health_probe_task

@@ -64,7 +64,7 @@ spec:
 
         # Extract document skills from nexus image into emptyDir for setup-claude
         - name: extract-skills
-          image: nexus:v2.0.0
+          image: nexus:v2.0.4
           imagePullPolicy: Never
           command:
             - sh
@@ -116,7 +116,7 @@ spec:
         # Login Codex CLI with OpenAI API key from nexus-env secret
         # Codex Rust binary ignores OPENAI_API_KEY env var — needs explicit login
         - name: setup-codex
-          image: nexus:v2.0.0
+          image: nexus:v2.0.4
           imagePullPolicy: Never
           command:
             - sh
@@ -152,7 +152,7 @@ spec:
 
       containers:
         - name: nexus
-          image: nexus:v2.0.0
+          image: nexus:v2.0.4
           imagePullPolicy: Never
           ports:
             - containerPort: 9876
@@ -212,14 +212,19 @@ spec:
             - name: report-sync
               mountPath: /sync
               readOnly: true
+            # Security policy (hot-reloadable via ConfigMap update)
+            - name: security-policy
+              mountPath: /app/security/policy.yaml
+              subPath: policy.yaml
+              readOnly: true
 
       volumes:
         - name: nexus-data
           persistentVolumeClaim:
-            claimName: nexus-data
+            claimName: nexus-data-local
         - name: nexus-output
           persistentVolumeClaim:
-            claimName: nexus-output
+            claimName: nexus-output-local
         - name: ssh-keys
           secret:
             secretName: ssh-keys
@@ -232,7 +237,7 @@ spec:
             defaultMode: 0600
         - name: claude-home
           persistentVolumeClaim:
-            claimName: claude-home
+            claimName: claude-home-local
         - name: claude-context
           configMap:
             name: claude-context
@@ -251,3 +256,7 @@ spec:
           hostPath:
             path: /fox_fast/puretensor-sync
             type: DirectoryOrCreate
+        - name: security-policy
+          configMap:
+            name: security-policy
+            defaultMode: 0644

@@ -254,6 +254,32 @@ def init_db():
         )""")
         log.info("Created wa_drafts table")
 
+    # Audit log table (security framework — ISO 27001 A.12.4)
+    audit_cols = [row[1] for row in con.execute("PRAGMA table_info(audit_log)").fetchall()]
+    if not audit_cols:
+        con.execute("""CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            session_id TEXT,
+            channel TEXT,
+            backend TEXT,
+            tool_name TEXT,
+            tool_args_hash TEXT,
+            result_hash TEXT,
+            result_preview TEXT,
+            model TEXT,
+            token_count INTEGER,
+            observer_name TEXT,
+            policy_decision TEXT,
+            policy_rule TEXT,
+            duration_ms INTEGER,
+            metadata_json TEXT
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts_type ON audit_log(timestamp, event_type)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id)")
+        log.info("Created audit_log table")
+
     con.commit()
     con.close()
 
