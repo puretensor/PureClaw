@@ -1,10 +1,10 @@
 # PureClaw
 
-**Agentic AI scaffolding powered by NVIDIA Nemotron Super — running on your own Blackwell GPUs.**
+**Enterprise-grade agentic AI framework with declarative security policies, audit trails, and local GPU inference on NVIDIA Blackwell.**
 
-PureClaw is an agentic AI system built around [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1), NVIDIA's premier agentic supermodel, served locally via [vLLM](https://github.com/vllm-project/vllm) on NVIDIA RTX PRO 6000 Blackwell GPUs. One agent, 19 tools, full tool calling, streaming responses, persistent memory — all running on your own hardware with zero cloud dependency.
+PureClaw is a security-hardened agentic AI system built around [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1), served locally via [vLLM](https://github.com/vllm-project/vllm) on NVIDIA RTX PRO 6000 Blackwell GPUs. 8 swappable LLM backends, 19 tools, declarative YAML security policies, full audit logging, credential redaction, SSRF protection, and policy hot-reload without restart. One agent, zero cloud dependency.
 
-PureClaw connects through Telegram, Discord, and email. It ships with 8 swappable engine backends — NVIDIA Nemotron Super is the default and recommended engine. Cloud backends (Anthropic, OpenAI, Google) are available as fallbacks.
+PureClaw connects through Telegram, Discord, WhatsApp, and email. It runs 16 autonomous background observers for continuous operational intelligence. Cloud backends (Anthropic, OpenAI, Google) are available as fallbacks when local GPU inference isn't needed.
 
 [pureclaw.ai](https://pureclaw.ai) | [GitHub](https://github.com/puretensor/PureClaw)
 
@@ -298,6 +298,7 @@ kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/secrets.yaml    # create from .env first
 kubectl apply -f k8s/pvcs.yaml
 kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/security-policy-configmap.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 ```
@@ -306,6 +307,8 @@ Or use the deploy script:
 ```bash
 bash k8s/deploy.sh
 ```
+
+The security policy is mounted as a ConfigMap at `/app/security/policy.yaml`. Update with `kubectl apply` and the `PolicyWatcher` reloads it within 10 seconds -- no pod restart needed.
 
 </details>
 
@@ -523,8 +526,18 @@ Observers are optional — they run if configured but won't break anything if th
 ```
 nexus.py (entry point)
   |
+  +-- Security (security/)
+  |     +-- policy.py          YAML policy loading, validation, hot-reload watcher
+  |     +-- audit.py           Structured audit trail (SQLite audit_log table)
+  |     +-- filesystem.py      Path-based read/write ACLs + bash heuristics
+  |     +-- network.py         SSRF protection + domain allow/deny
+  |     +-- redact.py          Credential redaction (regex + env vars)
+  |     +-- inference.py       Model allowlist, token budget, prompt integrity
+  |     +-- policy.yaml        Declarative security policy (YAML)
+  |     +-- schema.json        JSON Schema for policy validation
+  |
   +-- Engine (backends/)
-  |     +-- vllm              NVIDIA Nemotron Super via vLLM (default)
+  |     +-- vllm               NVIDIA Nemotron Super via vLLM (default)
   |     +-- ollama             Local models via Ollama API
   |     +-- anthropic_api      Direct Anthropic Messages API (prompt caching)
   |     +-- bedrock_api        Claude via AWS Bedrock Converse API
@@ -532,11 +545,12 @@ nexus.py (entry point)
   |     +-- codex_cli          Codex CLI agent
   |     +-- gemini_cli         Gemini CLI agent
   |     +-- hybrid             Routes between API (fast) and CLI (power)
-  |     +-- tools.py           19 tools + shared execution loop + plan mode
+  |     +-- tools.py           19 tools + shared execution loop + policy enforcement
   |
   +-- Channels
   |     +-- Telegram           Streaming, keyboards, voice, photos, documents
   |     +-- Discord            Streaming, slash commands
+  |     +-- WhatsApp           Multi-instance bridge (baileys sidecar)
   |     +-- Email Input        IMAP polling, classification, draft generation
   |
   +-- Observers (16)           Background tasks on cron schedules + persistent threads
@@ -669,6 +683,14 @@ AWS credentials are read from standard sources (`~/.aws/credentials`, env vars, 
 | `PRESERVE_RECENT_MESSAGES` | `40` | Recent messages to keep verbatim |
 | `SUMMARY_MODEL` | `us.anthropic.claude-haiku-4-5-20251001` | Model used for summarization |
 
+### Security Policy
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SECURITY_POLICY_PATH` | `security/policy.yaml` | Path to YAML security policy file |
+
+See [Security Framework](#security-framework) for full policy schema documentation.
+
 ### Other
 
 | Variable | Description |
@@ -723,14 +745,24 @@ vllm serve nvidia/nemotron-3-super \
 
 ```
 PureClaw/
-+-- nexus.py                    Entry point — starts all subsystems
++-- nexus.py                    Entry point -- starts all subsystems
 +-- config.py                   Environment loading, system prompt, logging
-+-- db.py                       SQLite: sessions, drafts, follow-ups, tasks
-+-- engine.py                   Engine abstraction (sync + streaming)
++-- db.py                       SQLite: sessions, drafts, follow-ups, tasks, audit_log
++-- engine.py                   Engine abstraction (sync + streaming + audit)
 +-- memory.py                   Persistent markdown memory system
 +-- scheduler.py                Task scheduler (/schedule, /remind)
 +-- context_compression.py      Two-tier conversation compression
 +-- health_probes.py            Background service health checking
+|
++-- security/                   Enterprise security framework
+|     +-- policy.py             YAML policy loading, validation, hot-reload watcher
+|     +-- policy.yaml           Default security policy (ships permissive)
+|     +-- schema.json           JSON Schema for policy validation
+|     +-- audit.py              Structured audit trail (fire-and-forget)
+|     +-- filesystem.py         Path-based read/write ACLs
+|     +-- network.py            SSRF protection + domain allow/deny
+|     +-- redact.py             Credential redaction (regex + env vars)
+|     +-- inference.py          Model allowlist, token budget, prompt integrity
 |
 +-- backends/
 |     +-- base.py               Backend Protocol definition
@@ -738,16 +770,18 @@ PureClaw/
 |     +-- ollama.py             Ollama backend with tool loop
 |     +-- anthropic_api.py      Anthropic Messages API backend
 |     +-- bedrock_api.py        AWS Bedrock Converse API backend
+|     +-- gemini_api.py         Google Gemini API backend
 |     +-- claude_code.py        Claude Code CLI backend
 |     +-- codex_cli.py          Codex CLI backend
 |     +-- gemini_cli.py         Gemini CLI backend
 |     +-- hybrid.py             API + CLI routing backend
-|     +-- tools.py              19 tools + shared execution loop + plan mode
+|     +-- tools.py              19 tools + shared execution loop + policy enforcement
 |     +-- __init__.py           Backend factory (lazy singleton)
 |
 +-- channels/
 |     +-- telegram/             Bot setup, commands, callbacks, streaming
 |     +-- discord/              Discord bot handlers and streaming
+|     +-- whatsapp.py           WhatsApp bridge (baileys sidecar)
 |     +-- email_in.py           IMAP polling email input
 |
 +-- observers/                  16 background observers (cron + persistent)
@@ -757,8 +791,8 @@ PureClaw/
 +-- tools/                      Integration tools (Gmail, Google Calendar)
 +-- prompts/                    System prompts
 +-- failover/                   Automatic failover runner
-+-- k8s/                        Kubernetes deployment manifests
-+-- tests/                      Test suite (886 tests)
++-- k8s/                        Kubernetes manifests + security policy ConfigMap
++-- tests/                      Test suite (990+ tests)
 +-- Dockerfile                  Container build
 +-- nexus.service               systemd unit file
 ```
@@ -771,7 +805,7 @@ PureClaw/
 python3 -m pytest tests/ -v
 ```
 
-886 tests covering backends, tools, observers, channels, handlers, and integration points.
+990+ tests covering backends, tools, security framework, observers, channels, handlers, and integration points. The security test suite (104 tests) covers policy loading/validation, filesystem ACLs, SSRF protection, credential redaction, and audit logging.
 
 ---
 
@@ -820,26 +854,109 @@ pandas>=2.0.0
 
 ---
 
-## Security
+## Security Framework
 
-- **Single-user only** — locked to one Telegram/Discord user ID
-- **No telemetry** — no analytics, no tracking, no phoning home
-- **No cloud dependency** — NVIDIA Nemotron Super + vLLM keeps everything local; cloud backends use your own keys/subscriptions
-- **Gated email replies** — VIP auto-replies pass 11 safety gates; all other drafts require explicit Telegram approval before sending
-- **Plan mode** — AI can self-restrict to read-only exploration before making changes
-- **Git security auditing** — automated scanning for secrets and sensitive data in repos
-- **Your hardware, your data** — inference runs on your NVIDIA GPUs, nothing leaves your network
+PureClaw ships with a declarative security framework designed for enterprise compliance (ISO 27001, Cyber Essentials, G-Cloud). All enforcement flows through a single choke point (`execute_tool()`) and is configured via a YAML policy file that can be hot-reloaded without restarting the agent.
+
+### Policy-Driven Access Control
+
+Security policies are defined in `security/policy.yaml` (or mounted as a Kubernetes ConfigMap). The policy schema is validated against `security/schema.json` at load time.
+
+```yaml
+# Example: restrictive policy for a production deployment
+version: 2
+filesystem:
+  read_allow: ["/data/**", "/app/**"]
+  read_deny: ["**/.env", "**/*secret*", "/etc/shadow"]
+  write_allow: ["/data/**", "/output/**"]
+  write_deny: ["/etc/**", "/usr/**", "/proc/**"]
+network:
+  fetch_allow_domains: ["*.github.com", "api.openai.com"]
+  block_private_ranges: true    # Blocks RFC 1918, loopback, link-local (SSRF protection)
+tools:
+  allowed: ["bash", "read_file", "grep", "web_search"]
+  denied: ["web_fetch"]         # Deny takes precedence over allow
+inference:
+  model_allowlist: ["claude-*", "nvidia/*"]
+  max_tokens_per_session: 500000
+credentials:
+  redact_patterns:
+    - "sk-[a-zA-Z0-9_-]{20,}"   # OpenAI/Anthropic keys
+    - "ghp_[a-zA-Z0-9]{36,}"    # GitHub tokens
+    - "AKIA[A-Z0-9]{16}"        # AWS access keys
+  redact_env_vars: ["ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN"]
+audit:
+  enabled: true
+  retention_days: 90
+```
+
+### Security Modules
+
+| Module | What it does |
+|--------|-------------|
+| `security/policy.py` | Frozen dataclass schema, YAML loading, JSON Schema validation, `PolicyWatcher` for hot-reload (10s poll, last-known-good on failure, monotonic version enforcement) |
+| `security/audit.py` | Fire-and-forget audit logging to SQLite `audit_log` table. Records every tool execution, LLM call, observer run, and policy violation. Redaction applied before logging. |
+| `security/filesystem.py` | Path-based read/write ACLs with symlink resolution. Heuristic bash command analysis (defense-in-depth). Deny rules take precedence. |
+| `security/network.py` | SSRF protection: blocks RFC 1918, loopback, link-local, reserved, and multicast addresses. Domain allow/deny lists with glob matching. DNS resolution check. |
+| `security/redact.py` | Credential redaction via regex patterns + environment variable values. Applied to tool outputs before LLM sees them, to conversation history before API calls, and to audit log entries. |
+| `security/inference.py` | Model allowlist validation, cumulative token budget per session (24h TTL), system prompt immutability check. |
+
+### How Enforcement Works
+
+All tool calls flow through `execute_tool()` in `backends/tools.py`. This is the single enforcement point:
+
+1. **Plan mode check** -- write tools blocked in read-only mode
+2. **Tool allowlist/denylist** -- is this tool permitted by policy?
+3. **Filesystem ACL** -- for file tools, is the path in the allow list and not in the deny list?
+4. **Bash heuristic** -- for shell commands, check for dangerous patterns and denied write targets
+5. **Network egress** -- for `web_fetch`, validate URL against domain list and SSRF rules
+6. **Execute** -- run the tool
+7. **Credential redaction** -- scrub secrets from the result before returning to the LLM
+8. **Audit log** -- record the execution (tool name, args hash, result hash, duration, policy decision)
+
+LLM calls are audited in `engine.py`. Observer runs are audited in `observers/registry.py`. All four API backends (Anthropic, Bedrock, vLLM, Ollama) redact conversation history before sending to the inference API.
+
+### Policy Hot-Reload
+
+The `PolicyWatcher` runs as an async task, polling the policy file every 10 seconds. Changes are detected via SHA256 hash comparison. On change:
+
+- New policy is validated against JSON Schema
+- Version must be >= current (monotonic, no downgrades)
+- Failed validation keeps the previous policy (last known good)
+- Atomic swap via Python attribute assignment (GIL-safe)
+
+In Kubernetes, mount the policy as a ConfigMap. `kubectl apply` updates the file, and the watcher reloads within 10 seconds -- no pod restart needed.
+
+### Baseline Protections
+
+- **Single-user only** -- locked to one Telegram/Discord user ID per channel
+- **No telemetry** -- no analytics, no tracking, no phoning home
+- **No cloud dependency** -- NVIDIA Nemotron Super + vLLM keeps everything local; cloud backends use your own keys
+- **Gated email replies** -- VIP auto-replies pass 11 safety gates; all other drafts require explicit Telegram approval
+- **Plan mode** -- AI can self-restrict to read-only exploration before making changes
+- **Git security auditing** -- automated scanning for secrets and sensitive data in repos
+- **Container isolation** -- runs as unprivileged uid 1000 in Kubernetes with resource limits
+
+### Known Limitations
+
+These are documented for compliance transparency:
+
+1. **Bash tool is heuristically checked, not sandboxed.** `check_bash_command()` is static analysis, not a security boundary. Mitigation: container runs as unprivileged uid 1000, K8s resource limits.
+2. **No L7 traffic inspection.** URL checks are at the application layer. An agent could use `bash` + `curl` to bypass `web_fetch` checks. Mitigation: bash heuristic checks + audit logging.
+3. **Single-tenant only.** PureClaw serves one authorized user. Multi-tenancy would require per-user policy scopes.
 
 ---
 
 ## Built With
 
-- [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1) — agentic supermodel
-- [vLLM](https://github.com/vllm-project/vllm) — high-throughput model serving
-- [NVIDIA RTX PRO 6000 Blackwell](https://www.nvidia.com/en-us/design-visualization/rtx-pro-6000/) — inference hardware
-- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) — Telegram integration
-- [discord.py](https://github.com/Rapptz/discord.py) — Discord integration
-- [OpenAI Python SDK](https://github.com/openai/openai-python) — vLLM client (OpenAI-compatible API)
+- [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1) -- agentic supermodel (default engine)
+- [vLLM](https://github.com/vllm-project/vllm) -- high-throughput model serving
+- [NVIDIA RTX PRO 6000 Blackwell](https://www.nvidia.com/en-us/design-visualization/rtx-pro-6000/) -- inference hardware
+- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) -- Telegram integration
+- [discord.py](https://github.com/Rapptz/discord.py) -- Discord integration
+- [OpenAI Python SDK](https://github.com/openai/openai-python) -- vLLM client (OpenAI-compatible API)
+- [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python) -- Anthropic API + prompt caching
+- [Google GenAI SDK](https://github.com/googleapis/python-genai) -- Gemini API backend
 
 ---
 
