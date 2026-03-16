@@ -151,9 +151,14 @@ class OllamaBackend:
                 log.warning("Ollama call_sync: total timeout reached after %d iterations", iteration)
                 break
 
+            try:
+                from security.redact import redact_history
+                api_msgs = redact_history(messages)
+            except Exception:
+                api_msgs = messages
             payload = {
                 "model": model_id,
-                "messages": messages,
+                "messages": api_msgs,
                 "stream": False,
                 "options": self._get_options(),
             }

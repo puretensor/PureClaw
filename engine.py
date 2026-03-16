@@ -216,15 +216,27 @@ def call_sync(
 
     Returns dict with 'result', 'session_id' keys.
     """
+    import time as _time
     from backends import get_backend
 
-    return get_backend().call_sync(
+    backend = get_backend()
+    t0 = _time.monotonic()
+    result = backend.call_sync(
         prompt,
         model=model,
         session_id=session_id,
         timeout=timeout,
         system_prompt=SYSTEM_PROMPT,
     )
+    duration = int((_time.monotonic() - t0) * 1000)
+
+    try:
+        from security.audit import log_llm_call
+        log_llm_call(session_id, None, backend.name, model, None, duration)
+    except Exception:
+        pass
+
+    return result
 
 
 async def call_streaming(
@@ -239,7 +251,19 @@ async def call_streaming(
 
     Returns dict with 'result', 'session_id', 'written_files' keys.
     """
+    import time as _time
     from backends import get_backend
+
+    # Inference guard: model allowlist check
+    try:
+        from security.inference import get_inference_guard
+        guard = get_inference_guard()
+        allowed, reason = guard.check_model(model)
+        if not allowed:
+            log.warning("Inference guard blocked model '%s': %s", model, reason)
+            return {"result": f"Error: {reason}", "session_id": session_id, "written_files": []}
+    except Exception:
+        pass
 
     memory_ctx = None
     parts = []
@@ -254,7 +278,17 @@ async def call_streaming(
     if parts:
         memory_ctx = "\n\n".join(parts)
 
-    return await get_backend().call_streaming(
+    # Redact memory context before injection
+    try:
+        from security.redact import redact_text
+        if memory_ctx:
+            memory_ctx = redact_text(memory_ctx)
+    except Exception:
+        pass
+
+    backend = get_backend()
+    t0 = _time.monotonic()
+    result = await backend.call_streaming(
         message,
         session_id=session_id,
         model=model,
@@ -264,3 +298,12 @@ async def call_streaming(
         memory_context=memory_ctx,
         extra_system_prompt=extra_system_prompt,
     )
+    duration = int((_time.monotonic() - t0) * 1000)
+
+    try:
+        from security.audit import log_llm_call
+        log_llm_call(session_id, None, backend.name, model, None, duration)
+    except Exception:
+        pass
+
+    return result

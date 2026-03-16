@@ -648,6 +648,11 @@ class BedrockAPIBackend:
         )
 
         def send_request(msgs):
+            try:
+                from security.redact import redact_history
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             return self._converse(model_id, msgs, **system_kw)
 
         if self._tools_enabled:

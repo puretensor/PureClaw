@@ -29,6 +29,24 @@ log = logging.getLogger("nexus")
 # Strip thinking tokens before returning text to user
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
+
+def _repair_json(raw: str) -> dict | None:
+    """Attempt to repair malformed JSON from NVFP4 quantization."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    s = s.replace("True", "true").replace("False", "false").replace("None", "null")
+    s = re.sub(r',\s*}', '}', s)
+    s = re.sub(r',\s*]', ']', s)
+    if s.count('{') > s.count('}'):
+        s += '}' * (s.count('{') - s.count('}'))
+    if s.count('[') > s.count(']'):
+        s += ']' * (s.count('[') - s.count(']'))
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return None
+
 # ---------------------------------------------------------------------------
 # Tool-nudge: keywords that imply the user wants live/current data.
 # If any match, append a reminder so the model reaches for web_search.
@@ -151,10 +169,14 @@ class VLLMBackend:
                 try:
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
-                    # NVFP4 W4A4 can produce malformed JSON — log and skip
-                    log.warning("Malformed tool call JSON from %s: %s",
-                                tc.function.name, tc.function.arguments)
-                    args = {}
+                    repaired = _repair_json(tc.function.arguments)
+                    if repaired is not None:
+                        args = repaired
+                        log.info("Repaired malformed JSON for %s", tc.function.name)
+                    else:
+                        log.warning("Unrecoverable malformed JSON from %s: %s",
+                                    tc.function.name, (tc.function.arguments or "")[:200])
+                        continue  # skip this tool call entirely
                 tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
                 tc_dicts.append({
                     "id": tc.id,
@@ -205,15 +227,20 @@ class VLLMBackend:
         messages = history + [{"role": "user", "content": nudged}]
 
         def send_request(msgs):
+            try:
+                from security.redact import redact_history
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             api_msgs = ([{"role": "system", "content": system_str}] + msgs) if system_str else msgs
             return self._client.chat.completions.create(
                 model=self._model,
                 messages=api_msgs,
                 tools=self._tools,
                 max_tokens=self._max_tokens,
-                temperature=0.6 if self._tools else 0.8,
-                top_p=0.95,
-                extra_body={"top_k": 20, "min_p": 0},
+                temperature=0.3 if self._tools else 0.7,
+                top_p=0.90,
+                extra_body={"top_k": 20, "min_p": 0.05, "repetition_penalty": 1.05},
                 timeout=min(timeout, self._total_timeout),
             )
 
@@ -279,9 +306,9 @@ class VLLMBackend:
                 messages=api_msgs,
                 tools=self._tools,
                 max_tokens=self._max_tokens,
-                temperature=0.6 if self._tools else 0.8,
-                top_p=0.95,
-                extra_body={"top_k": 20, "min_p": 0},
+                temperature=0.3 if self._tools else 0.7,
+                top_p=0.90,
+                extra_body={"top_k": 20, "min_p": 0.05, "repetition_penalty": 1.05},
                 timeout=self._total_timeout,
             )
 

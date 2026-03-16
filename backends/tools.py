@@ -1203,6 +1203,8 @@ def execute_tool(
     *,
     timeout: int = 30,
     cwd: str | None = None,
+    session_id: str | None = None,
+    channel: str | None = None,
 ) -> tuple[str, list[str]]:
     """Execute a tool by name. Returns (result_string, written_files).
 
@@ -1211,24 +1213,110 @@ def execute_tool(
         args: Tool arguments dict
         timeout: Timeout for bash commands (seconds)
         cwd: Working directory for bash/grep
+        session_id: Session ID for audit logging
+        channel: Channel name for audit logging
     """
+    t0 = time.monotonic()
+
     # Plan mode enforcement
     if is_plan_mode() and name in _WRITE_TOOLS:
+        _audit_tool(session_id, channel, name, args, "blocked by plan mode", 0, "deny", "plan_mode")
         return (
             f"Error: '{name}' is blocked in plan mode. "
             "Use read-only tools or call exit_plan_mode first.",
             [],
         )
 
+    # --- Security policy enforcement ---
+    try:
+        denied, deny_reason = _check_security_policy(name, args)
+        if denied:
+            duration = int((time.monotonic() - t0) * 1000)
+            _audit_tool(session_id, channel, name, args, deny_reason, duration, "deny", deny_reason)
+            return f"Error: {deny_reason}", []
+    except Exception as e:
+        log.debug("Security policy check error (non-fatal, allowing): %s", e)
+
     executor = _EXECUTORS.get(name)
     if executor is None:
         return f"Error: unknown tool '{name}'", []
 
     try:
-        return executor(args, timeout=timeout, cwd=cwd)
+        result_str, written = executor(args, timeout=timeout, cwd=cwd)
+
+        # Redact credentials from tool output
+        try:
+            from security.redact import redact_text
+            result_str = redact_text(result_str)
+        except Exception:
+            pass
+
+        duration = int((time.monotonic() - t0) * 1000)
+        _audit_tool(session_id, channel, name, args, result_str, duration, "allow", None)
+        return result_str, written
     except Exception as e:
         log.error("Tool %s execution error: %s", name, e)
+        duration = int((time.monotonic() - t0) * 1000)
+        _audit_tool(session_id, channel, name, args, str(e), duration, "error", None)
         return f"Error executing {name}: {e}", []
+
+
+def _check_security_policy(name: str, args: dict) -> tuple[bool, str]:
+    """Check tool call against security policy. Returns (denied, reason)."""
+    from security.policy import get_policy, matches_glob
+
+    policy = get_policy()
+
+    # Tool allowlist/denylist
+    if name in policy.tools.denied:
+        return True, f"Tool '{name}' is denied by security policy"
+    if "*" not in policy.tools.allowed and name not in policy.tools.allowed:
+        return True, f"Tool '{name}' not in security policy allowed list"
+
+    # Filesystem checks for file tools
+    if name in ("read_file", "glob", "grep"):
+        path = args.get("file_path") or args.get("path") or ""
+        if path:
+            from security.filesystem import check_path_access
+            allowed, reason = check_path_access(path, "read")
+            if not allowed:
+                return True, reason
+
+    elif name in ("write_file", "edit_file"):
+        path = args.get("file_path", "")
+        if path:
+            from security.filesystem import check_path_access
+            allowed, reason = check_path_access(path, "write")
+            if not allowed:
+                return True, reason
+
+    elif name == "bash":
+        command = args.get("command", "")
+        if command:
+            from security.filesystem import check_bash_command
+            allowed, reason = check_bash_command(command)
+            if not allowed:
+                return True, reason
+
+    # Network checks for web_fetch
+    elif name == "web_fetch":
+        url = args.get("url", "")
+        if url:
+            from security.network import check_url_access
+            allowed, reason = check_url_access(url)
+            if not allowed:
+                return True, reason
+
+    return False, ""
+
+
+def _audit_tool(session_id, channel, name, args, result, duration_ms, decision, rule):
+    """Fire-and-forget audit log for tool execution."""
+    try:
+        from security.audit import log_tool_execution
+        log_tool_execution(session_id, channel, name, args, result, duration_ms, decision, rule)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1323,14 +1411,24 @@ def run_tool_loop_sync(
     Returns:
         {"result": str, "session_id": None, "written_files": list[str]}
     """
+    import hashlib
+
     written_files: list[str] = []
     last_text = ""
     start = time.time()
+    recent_calls: list[str] = []
 
     for iteration in range(max_iterations):
         if time.time() - start > total_timeout:
             log.warning("Tool loop: total timeout after %d iterations", iteration)
             break
+
+        # Nudge model to complete when nearing iteration limit
+        if iteration == max_iterations - 3:
+            messages.append({
+                "role": "user",
+                "content": "[You are approaching your tool call limit. Please synthesize your findings into a final answer now. Only call another tool if absolutely necessary.]",
+            })
 
         response = send_request(messages)
         text, tool_calls, assistant_msg = parse_response(response)
@@ -1354,8 +1452,17 @@ def run_tool_loop_sync(
             written_files.extend(new_files)
             messages.append(format_tool_result(tc.name, tc.id, result_str))
 
+            # Track call signatures for degenerate loop detection
+            call_sig = f"{tc.name}:{hashlib.md5(json.dumps(tc.arguments, sort_keys=True).encode()).hexdigest()[:8]}"
+            recent_calls.append(call_sig)
+
+        # Detect repetitive loops: same exact call 3+ times in a row
+        if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
+            log.warning("Degenerate tool loop detected: %s called 3x", recent_calls[-1])
+            break
+
     return {
-        "result": last_text or "(max tool iterations reached)",
+        "result": (last_text + "\n\n_[Processing limit reached — response may be incomplete]_") if last_text else "(Unable to complete — try rephrasing or simplifying your question)",
         "session_id": None,
         "written_files": written_files,
     }
@@ -1387,14 +1494,24 @@ async def run_tool_loop_async(
     This enables streaming responses where send and parse are fused
     (e.g. Bedrock converse_stream).
     """
+    import hashlib
+
     written_files: list[str] = []
     last_text = ""
     start = time.time()
+    recent_calls: list[str] = []
 
     for iteration in range(max_iterations):
         if time.time() - start > total_timeout:
             log.warning("Tool loop async: total timeout after %d iterations", iteration)
             break
+
+        # Nudge model to complete when nearing iteration limit
+        if iteration == max_iterations - 3:
+            messages.append({
+                "role": "user",
+                "content": "[You are approaching your tool call limit. Please synthesize your findings into a final answer now. Only call another tool if absolutely necessary.]",
+            })
 
         if send_and_parse_stream:
             text, tool_calls, assistant_msg = await send_and_parse_stream(
@@ -1463,8 +1580,18 @@ async def run_tool_loop_async(
                 written_files.extend(new_files)
                 messages.append(format_tool_result(tc.name, tc.id, result_str))
 
+        # Track call signatures for degenerate loop detection
+        for tc in tool_calls:
+            call_sig = f"{tc.name}:{hashlib.md5(json.dumps(tc.arguments, sort_keys=True).encode()).hexdigest()[:8]}"
+            recent_calls.append(call_sig)
+
+        # Detect repetitive loops: same exact call 3+ times in a row
+        if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
+            log.warning("Degenerate tool loop detected: %s called 3x", recent_calls[-1])
+            break
+
     return {
-        "result": last_text or "(max tool iterations reached)",
+        "result": (last_text + "\n\n_[Processing limit reached — response may be incomplete]_") if last_text else "(Unable to complete — try rephrasing or simplifying your question)",
         "session_id": None,
         "written_files": written_files,
     }

@@ -109,10 +109,26 @@ class ObserverRegistry:
 
     def _run_observer(self, observer: Observer) -> ObserverResult:
         """Run a single observer (in thread pool). Catches all exceptions."""
+        import time as _time
+        t0 = _time.monotonic()
         try:
             ctx = ObserverContext()
-            return observer.run(ctx)
+            result = observer.run(ctx)
+            duration = int((_time.monotonic() - t0) * 1000)
+            try:
+                from security.audit import log_observer_run
+                log_observer_run(observer.name, result.success, duration,
+                                 result.error if not result.success else None)
+            except Exception:
+                pass
+            return result
         except Exception as e:
+            duration = int((_time.monotonic() - t0) * 1000)
+            try:
+                from security.audit import log_observer_run
+                log_observer_run(observer.name, False, duration, str(e))
+            except Exception:
+                pass
             log.exception("Observer %s crashed: %s", observer.name, e)
             return ObserverResult(
                 success=False,

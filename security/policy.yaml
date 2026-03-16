@@ -1,0 +1,87 @@
+# pureClaw Security Policy — v1
+# Shipped permissive. Tighten per deployment.
+# Validated against security/schema.json at load time.
+
+version: 1
+
+filesystem:
+  read_allow:
+    - "/app/**"
+    - "/data/**"
+    - "/sync/**"
+    - "/output/**"
+    - "/tmp/**"
+  read_deny:
+    - "/etc/shadow"
+    - "/etc/gshadow"
+    - "**/.env"
+    - "**/*secret*"
+    - "**/*credential*"
+    - "**/*password*"
+  write_allow:
+    - "/data/**"
+    - "/output/**"
+    - "/tmp/**"
+    - "/app/**"
+  write_deny:
+    - "/etc/**"
+    - "/usr/**"
+    - "/bin/**"
+    - "/sbin/**"
+    - "/boot/**"
+    - "/proc/**"
+    - "/sys/**"
+
+network:
+  fetch_allow_domains:
+    - "*"
+  fetch_deny_domains: []
+  block_private_ranges: true
+
+tools:
+  allowed:
+    - "*"
+  denied: []
+
+inference:
+  model_allowlist:
+    - "*"
+  max_tokens_per_session: 0
+  system_prompt_immutable: false
+
+credentials:
+  redact_patterns:
+    # Anthropic API keys
+    - "sk-ant-[a-zA-Z0-9_-]{20,}"
+    # OpenAI / generic sk- keys
+    - "sk-[a-zA-Z0-9_-]{20,}"
+    # xAI keys
+    - "xai-[a-zA-Z0-9_-]{20,}"
+    # Google API keys
+    - "AIza[a-zA-Z0-9_-]{30,}"
+    # AWS access keys
+    - "AKIA[A-Z0-9]{16}"
+    # GitHub tokens
+    - "ghp_[a-zA-Z0-9]{36,}"
+    - "gho_[a-zA-Z0-9]{36,}"
+    - "ghs_[a-zA-Z0-9]{36,}"
+    # JWT tokens
+    - "eyJ[a-zA-Z0-9_-]{20,}\\.eyJ[a-zA-Z0-9_-]{20,}\\.[a-zA-Z0-9_-]+"
+    # Generic long hex secrets (40+ chars)
+    - "(?<![a-fA-F0-9])[a-fA-F0-9]{40,}(?![a-fA-F0-9])"
+  redact_env_vars:
+    - "ANTHROPIC_API_KEY"
+    - "TELEGRAM_BOT_TOKEN"
+    - "ALERT_BOT_TOKEN"
+    - "DISCORD_BOT_TOKEN"
+    - "GITEA_TOKEN"
+    - "DARWIN_API_TOKEN"
+    - "GOLD_API_KEY"
+    - "GOOGLE_API_KEY"
+    - "OPENAI_API_KEY"
+
+audit:
+  enabled: true
+  log_tool_args: true
+  log_result_preview: true
+  retention_days: 90

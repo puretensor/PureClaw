@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pureClaw Security Policy",
+  "description": "Declarative security policy for pureClaw/Nexus agent framework",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic policy version — must increase on each update"
+    },
+    "filesystem": {
+      "type": "object",
+      "properties": {
+        "read_allow": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Glob patterns for paths allowed for read operations"
+        },
+        "read_deny": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Glob patterns for paths denied for read operations (takes precedence)"
+        },
+        "write_allow": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Glob patterns for paths allowed for write operations"
+        },
+        "write_deny": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Glob patterns for paths denied for write operations (takes precedence)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "fetch_allow_domains": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Domain globs allowed for web_fetch (e.g. '*.example.com')"
+        },
+        "fetch_deny_domains": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Domain globs denied for web_fetch (takes precedence)"
+        },
+        "block_private_ranges": {
+          "type": "boolean",
+          "description": "Block requests to RFC 1918, loopback, and link-local addresses"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Tool names allowed for execution. ['*'] = all."
+        },
+        "denied": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Tool names explicitly denied (takes precedence over allowed)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inference": {
+      "type": "object",
+      "properties": {
+        "model_allowlist": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Model ID patterns allowed. ['*'] = all."
+        },
+        "max_tokens_per_session": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum cumulative tokens per session (0 = unlimited)"
+        },
+        "system_prompt_immutable": {
+          "type": "boolean",
+          "description": "Prevent tools from modifying the system prompt"
+        }
+      },
+      "additionalProperties": false
+    },
+    "credentials": {
+      "type": "object",
+      "properties": {
+        "redact_patterns": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Regex patterns matching credential strings to redact"
+        },
+        "redact_env_vars": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Environment variable names whose values should be redacted from output"
+        }
+      },
+      "additionalProperties": false
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable audit logging of all tool executions and LLM calls"
+        },
+        "log_tool_args": {
+          "type": "boolean",
+          "description": "Log tool argument hashes (for forensics without leaking content)"
+        },
+        "log_result_preview": {
+          "type": "boolean",
+          "description": "Log first 200 chars of tool results (redacted)"
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Days to retain audit logs (0 = forever)"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["version"],
+  "additionalProperties": false
+}
