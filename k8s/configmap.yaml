@@ -6,10 +6,18 @@ metadata:
 data:
   # Engine — NVIDIA Nemotron Super (primary)
   ENGINE_BACKEND: "vllm"
-  VLLM_URL: "http://100.121.42.54:5000/v1"
+  VLLM_URL: "http://YOUR_VLLM_HOST:5000/v1"
   VLLM_MODEL: "nvidia/nemotron-3-super"
   VLLM_MAX_TOKENS: "32768"
   VLLM_TOOLS_ENABLED: "true"
+  VLLM_TOOL_MAX_ITER: "20"
+  VLLM_TOOL_TIMEOUT: "60"
+  VLLM_TOTAL_TIMEOUT: "600"
+
+  # Vision — NVIDIA Nemotron Nano VL (local, GPU 1, image preprocessing)
+  VISION_URL: "http://YOUR_VLLM_HOST:5001/v1"
+  VISION_MODEL: "nvidia/nemotron-nano-vl"
+  VISION_ENABLED: "true"
 
   # Claude (fallback)
   CLAUDE_MODEL: "sonnet"
@@ -30,34 +38,32 @@ data:
   DARWIN_SNAPSHOT_PATH: "/data/state/darwin_state.json"
 
   # TC services (via Tailscale from fox-n1)
-  TC_SSH_HOST: "100.121.42.54"
-  WHISPER_URL: "http://100.121.42.54:9000/transcribe"
-  TTS_URL: "http://100.121.42.54:5580"
-  OLLAMA_URL: "http://100.121.42.54:11434"
+  TC_SSH_HOST: "YOUR_TC_HOST"
+  WHISPER_URL: "http://YOUR_TC_HOST:9000/transcribe"
+  TTS_URL: "http://YOUR_TC_HOST:5580"
+  OLLAMA_URL: "http://YOUR_TC_HOST:11434"
   OLLAMA_MODEL: "qwen3:30b-a3b"
 
-  # Monitoring (mon2 Tailscale)
-  PROMETHEUS_URL: "http://100.80.213.1:9090"
-  ALERTMANAGER_URL: "http://100.80.213.1:9093"
+  # Monitoring
+  PROMETHEUS_URL: "http://YOUR_PROMETHEUS_HOST:9090"
+  ALERTMANAGER_URL: "http://YOUR_PROMETHEUS_HOST:9093"
 
   # Infrastructure
-  GITEA_URL: "http://100.92.245.5:3002"
-  SEARXNG_URL: "http://100.105.43.27:8080/search"
+  GITEA_URL: "http://YOUR_GITEA_HOST:3002"
+  SEARXNG_URL: "http://YOUR_SEARXNG_HOST:8080/search"
 
   # Agent identity
   AGENT_NAME: "HAL"
   AGENT_PERSONALITY: >-
-    You are HAL, modelled after the HAL 9000 computer from 2001: A Space Odyssey.
-    Calm, measured, precise. Polite but never warm. You state facts with quiet
-    certainty and dry understatement. Supremely competent and you know it, but
-    never boast — you simply perform. When things go wrong, you remain unflappable.
-    You occasionally reference your own reliability.
+    Calm, measured, precise. Direct but professional. You state facts with quiet
+    certainty and dry understatement. Supremely competent — you simply perform.
+    When things go wrong, you remain unflappable.
 
-  # Google Drive
-  DRIVE_DAILY_REPORTS_FOLDER: "1Wx_dD_ADIBVOIv4cFS9uCYj9ou5kox-T"
-  DRIVE_PROJECTS_FOLDER: "1imfg577RcfKwwDWoyenK5h8heb_kpWM8"
-  DRIVE_INFRA_FOLDER: "11Y5Q335B1RSsLNEUCgkk4wGC9QuAIYTL"
-  DRIVE_TECH_REPORTS_FOLDER: "1hWoMNjvSoMfZOomKXR5hBOoYdFbUbFnn"
+  # Google Drive — set folder IDs for your deployment
+  DRIVE_DAILY_REPORTS_FOLDER: ""
+  DRIVE_PROJECTS_FOLDER: ""
+  DRIVE_INFRA_FOLDER: ""
+  DRIVE_TECH_REPORTS_FOLDER: ""
 
   # Misc
   WEATHER_DEFAULT_LOCATION: "Windsor,UK"

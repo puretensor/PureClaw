@@ -37,8 +37,8 @@ log = logging.getLogger("nexus")
 # SSH to tensor-core (reused from git_auto_sync)
 TC_SSH = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 puretensorai@localhost"
 
-# Prometheus on mon2
-PROMETHEUS_URL = "http://100.80.213.1:9090/api/v1/query"
+# Prometheus on mon2 — set PROMETHEUS_URL in .env
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090") + "/api/v1/query"
 
 # Target repos — path on TC, remote names
 REPOS = {
