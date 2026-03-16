@@ -394,6 +394,10 @@ class TestWebhookHandler:
         handler.log_message = MagicMock()
         handler.log_error = MagicMock()
 
+        # Bind real private methods so do_POST routing works with mock
+        handler._handle_gitea_push = WebhookHandler._handle_gitea_push.__get__(handler)
+        handler._handle_wa_incoming = WebhookHandler._handle_wa_incoming.__get__(handler)
+
         if body:
             body_bytes = json.dumps(body).encode() if isinstance(body, dict) else body
             handler.rfile = io.BytesIO(body_bytes)
