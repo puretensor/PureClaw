@@ -40,10 +40,7 @@ ALLOWED_SERVICES = {
     "openclaw-gateway",
 }
 
-DEPLOY_WEBHOOK_URL = os.environ.get(
-    "DEPLOY_WEBHOOK_URL",
-    "http://e2-micro:8888/webhook.php?secret=gitea_deploy_2024",
-)
+DEPLOY_WEBHOOK_URL = os.environ.get("DEPLOY_WEBHOOK_URL", "")
 
 # Websites to check in check_sites()
 MONITORED_SITES = [
