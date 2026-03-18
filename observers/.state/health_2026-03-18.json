@@ -1,6 +1,6 @@
 {
   "date": "2026-03-18",
-  "generated": "2026-03-18T14:00:03.385537+00:00",
+  "generated": "2026-03-18T16:00:03.249517+00:00",
   "observers": {
     "alertmanager_seen": {
       "last_run": null,
@@ -12,6 +12,10 @@
     },
     "email_seen": {
       "error": "unreadable"
+    },
+    "health_2026-03-18": {
+      "last_run": null,
+      "total_runs": "?"
     },
     "intel_briefing_published": {
       "last_run": null,
@@ -26,5 +30,5 @@
       "total_runs": "?"
     }
   },
-  "total_tracked": 6
+  "total_tracked": 7
 }
