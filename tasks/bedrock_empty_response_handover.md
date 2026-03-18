@@ -85,6 +85,6 @@ This rebuilds the container image on fox-n1, imports to k3s containerd, and rest
 
 ## Context
 
-- Pod: K3s namespace `nexus` on fox-n1 (100.103.248.9)
+- Pod: K3s namespace `nexus` on fox-n1
 - Image: `nexus:v2.0.0` (rebuilt each deploy)
 - The bot was working before — this may be a regression from a Bedrock API change, or the thinking feature was added recently and never worked correctly for simple messages.

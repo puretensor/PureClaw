@@ -35,7 +35,9 @@ from observers.base import Observer, ObserverResult
 log = logging.getLogger("nexus")
 
 # SSH to tensor-core (reused from git_auto_sync)
-TC_SSH = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 puretensorai@localhost"
+_TC_USER = os.environ.get("TC_SSH_USER", "puretensorai")
+_TC_HOST = os.environ.get("TC_SSH_HOST", "localhost")
+TC_SSH = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {_TC_USER}@{_TC_HOST}"
 
 # Prometheus on mon2 — set PROMETHEUS_URL in .env
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090") + "/api/v1/query"
@@ -800,7 +802,7 @@ class GitHubActivityObserver(Observer):
             proc = subprocess.run(
                 [
                     "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
-                    "puretensorai@localhost",
+                    f"{_TC_USER}@{_TC_HOST}",
                     f"tee {full_path} > /dev/null",
                 ],
                 input=content, capture_output=True, text=True, timeout=15,

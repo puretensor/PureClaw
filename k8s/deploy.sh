@@ -36,17 +36,18 @@ rsync -avz --exclude='.git' --exclude='__pycache__' --exclude='.env' \
   "$NEXUS_DIR/" "$FOX_N1:$BUILD_DIR/"
 
 # Claude CLI binary (resolve symlink)
-CLAUDE_BIN="$(readlink -f ~/.local/bin/claude)"
+CLAUDE_BIN="$(readlink -f "${CLAUDE_BIN_PATH:-$HOME/.local/bin/claude}")"
 echo "  Copying Claude CLI ($CLAUDE_BIN, $(du -h "$CLAUDE_BIN" | cut -f1))..."
 scp "$CLAUDE_BIN" "$FOX_N1:$BUILD_DIR/claude-bin/claude"
 
 # Utility scripts — place where container expects them (HOME=/app)
 ssh "$FOX_N1" "mkdir -p $BUILD_DIR/.config/puretensor"
-scp ~/.config/puretensor/{gmail,gcalendar,gdrive,imap}.py \
+PURETENSOR_CONFIG="${PURETENSOR_CONFIG_DIR:-$HOME/.config/puretensor}"
+scp "$PURETENSOR_CONFIG"/{gmail,gcalendar,gdrive,imap}.py \
   "$FOX_N1:$BUILD_DIR/.config/puretensor/"
 # Also copy credentials config if it exists
-scp ~/.config/puretensor/imap.conf "$FOX_N1:$BUILD_DIR/.config/puretensor/" 2>/dev/null || true
-scp ~/.config/puretensor/credentials.json "$FOX_N1:$BUILD_DIR/.config/puretensor/" 2>/dev/null || true
+scp "$PURETENSOR_CONFIG/imap.conf" "$FOX_N1:$BUILD_DIR/.config/puretensor/" 2>/dev/null || true
+scp "$PURETENSOR_CONFIG/credentials.json" "$FOX_N1:$BUILD_DIR/.config/puretensor/" 2>/dev/null || true
 
 echo "  Build context staged."
 
@@ -82,15 +83,18 @@ ssh "$FOX_N1" "kubectl -n nexus delete secret nexus-env 2>/dev/null || true"
 ssh "$FOX_N1" "kubectl -n nexus create secret generic nexus-env --from-env-file=/tmp/nexus.env && rm /tmp/nexus.env"
 
 # Claude CLI credentials
+CLAUDE_CREDS="${CLAUDE_CREDS_PATH:-$HOME/.claude/.credentials.json}"
 ssh "$FOX_N1" "kubectl -n nexus delete secret claude-credentials 2>/dev/null || true"
-scp ~/.claude/.credentials.json "$FOX_N1:/tmp/claude-creds.json"
+scp "$CLAUDE_CREDS" "$FOX_N1:/tmp/claude-creds.json"
 ssh "$FOX_N1" "kubectl -n nexus create secret generic claude-credentials \
   --from-file=.credentials.json=/tmp/claude-creds.json && rm /tmp/claude-creds.json"
 
 # SSH keys
+SSH_KEY="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
+SSH_CFG="${SSH_CONFIG_PATH:-$HOME/.ssh/config.puretensor}"
 ssh "$FOX_N1" "kubectl -n nexus delete secret ssh-keys 2>/dev/null || true"
-scp ~/.ssh/id_ed25519 "$FOX_N1:/tmp/nexus-ssh-key"
-scp ~/.ssh/config.puretensor "$FOX_N1:/tmp/nexus-ssh-config"
+scp "$SSH_KEY" "$FOX_N1:/tmp/nexus-ssh-key"
+scp "$SSH_CFG" "$FOX_N1:/tmp/nexus-ssh-config"
 ssh "$FOX_N1" "kubectl -n nexus create secret generic ssh-keys \
   --from-file=id_ed25519=/tmp/nexus-ssh-key \
   --from-file=config=/tmp/nexus-ssh-config && \
@@ -98,7 +102,7 @@ ssh "$FOX_N1" "kubectl -n nexus create secret generic ssh-keys \
 
 # OAuth tokens
 ssh "$FOX_N1" "kubectl -n nexus delete secret oauth-tokens 2>/dev/null || true"
-OAUTH_DIR="$HOME/.config/puretensor/gdrive_tokens"
+OAUTH_DIR="${OAUTH_TOKENS_DIR:-$HOME/.config/puretensor/gdrive_tokens}"
 OAUTH_ARGS=""
 for f in "$OAUTH_DIR"/*.json; do
   [ -f "$f" ] || continue
