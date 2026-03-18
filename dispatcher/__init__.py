@@ -6,6 +6,7 @@ from dispatcher.router import (
     handle_weather,
     handle_markets_unified,
     handle_trains,
+    handle_commute,
     handle_status,
 )
 from dispatcher.apis import DispatchError

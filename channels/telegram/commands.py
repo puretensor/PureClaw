@@ -21,6 +21,7 @@ from dispatcher import (
     handle_weather,
     handle_markets_unified,
     handle_trains,
+    handle_commute,
     handle_status,
 )
 from dispatcher.apis import DispatchError
@@ -319,7 +320,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/weather [location] — Weather &amp; 3-day forecast\n"
         "/markets — Indices, crypto, metals, FX\n"
         "/nodes — Infrastructure status (13 nodes)\n"
-        "/trains [from] [to] — UK train departures\n\n"
+        "/trains [from] [to] — UK train departures\n"
+        "/central — Windsor Central \u2192 Slough \u2192 Paddington\n"
+        "/riverside — Windsor Riverside \u2192 Waterloo\n\n"
         "<b>Scheduling</b>\n"
         "/remind &lt;when&gt; &lt;message&gt; — Set reminder\n"
         "/schedule &lt;when&gt; &lt;prompt&gt; — Run prompt later\n"
@@ -380,6 +383,30 @@ async def cmd_trains_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         log.exception("Trains command error")
         await update.message.reply_text("Failed to fetch train data.")
+
+
+@authorized
+async def cmd_central(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /central — Windsor Central → Slough → Paddington commute card."""
+    try:
+        await handle_commute("central", update.effective_chat, context.bot)
+    except DispatchError as e:
+        await update.message.reply_text(f"\u26a0\ufe0f {e}")
+    except Exception:
+        log.exception("Central commute card error")
+        await update.message.reply_text("Failed to fetch commute data.")
+
+
+@authorized
+async def cmd_riverside(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /riverside — Windsor Riverside → Waterloo commute card."""
+    try:
+        await handle_commute("riverside", update.effective_chat, context.bot)
+    except DispatchError as e:
+        await update.message.reply_text(f"\u26a0\ufe0f {e}")
+    except Exception:
+        log.exception("Riverside commute card error")
+        await update.message.reply_text("Failed to fetch commute data.")
 
 
 @authorized
@@ -1090,6 +1117,18 @@ async def cmd_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Tracks which chat_ids are waiting for a source article to publish.
 # Set by /intel, cleared on first non-command message received.
 _intel_pending: dict[int, bool] = {}
+
+# Tracks which chat_ids are waiting for an image to OCR.
+# Set by /ocr, cleared when next photo/image document is received.
+_ocr_pending: dict[int, bool] = {}
+
+
+@authorized
+async def cmd_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /ocr — prime the next photo for full text extraction."""
+    chat_id = update.effective_chat.id
+    _ocr_pending[chat_id] = True
+    await update.message.reply_text("Send a photo or image — I'll extract all text from it.")
 
 
 @authorized

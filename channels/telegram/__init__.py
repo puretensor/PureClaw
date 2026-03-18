@@ -23,14 +23,14 @@ class TelegramChannel(Channel):
         from channels.telegram.commands import (
             cmd_new, cmd_opus, cmd_sonnet, cmd_ollama, cmd_nemotron, cmd_backend,
             cmd_voice, cmd_status, cmd_help,
-            cmd_weather_card, cmd_trains_card,
+            cmd_weather_card, cmd_trains_card, cmd_central, cmd_riverside,
             cmd_markets_card, cmd_nodes_card,
             cmd_session, cmd_history, cmd_resume,
             cmd_schedule, cmd_remind, cmd_cancel,
             cmd_remember, cmd_forget, cmd_memories,
             cmd_check, cmd_restart, cmd_logs, cmd_disk, cmd_top, cmd_deploy,
             cmd_drafts, cmd_calendar, cmd_followups,
-            cmd_intel,
+            cmd_intel, cmd_ocr,
             handle_message, handle_voice,
         )
         from channels.telegram.callbacks import handle_callback
@@ -87,10 +87,15 @@ class TelegramChannel(Channel):
         # Intel manual publish
         self.app.add_handler(CommandHandler("intel", cmd_intel))
 
+        # OCR mode
+        self.app.add_handler(CommandHandler("ocr", cmd_ocr))
+
         # Data card commands
         self.app.add_handler(CommandHandler("weather", cmd_weather_card))
         self.app.add_handler(CommandHandler("markets", cmd_markets_card))
         self.app.add_handler(CommandHandler("trains", cmd_trains_card))
+        self.app.add_handler(CommandHandler("central", cmd_central))
+        self.app.add_handler(CommandHandler("riverside", cmd_riverside))
         self.app.add_handler(CommandHandler("nodes", cmd_nodes_card))
 
         # Message and callback handlers

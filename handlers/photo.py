@@ -1,4 +1,9 @@
-"""Photo handler — forwards images sent via Telegram to Claude for analysis."""
+"""Photo handler — forwards images sent via Telegram to Claude for analysis.
+
+If the vision model is online, images are preprocessed via Nemotron Nano VL
+to produce a text description (like Whisper does for voice). Otherwise falls
+back to saving the file and asking Claude to read it directly.
+"""
 
 import asyncio
 import io
@@ -10,7 +15,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 
 from db import authorized, get_session, upsert_session, get_lock
-from config import log
+from config import log, VISION_ENABLED
 from handlers.summaries import maybe_generate_summary
 from channels.telegram.streaming import StreamingEditor
 from engine import call_streaming, split_message
@@ -48,26 +53,64 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_bytes = buf.getvalue()
             log.info("Downloaded photo: %d bytes", len(image_bytes))
 
-            # Save to temp file
-            IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-            image_path = IMAGE_DIR / f"{uuid.uuid4().hex}.jpg"
-            image_path.write_bytes(image_bytes)
-            log.info("Saved image to %s", image_path)
-
-            # Build prompt with image path
+            # Try vision preprocessing first (like Whisper for voice)
             caption = update.message.caption or ""
-            if caption.strip():
-                prompt = (
-                    f"The user sent an image located at {image_path}. "
-                    f"Please read/view this image file first, then respond to their message: "
-                    f"{caption}"
-                )
-            else:
-                prompt = (
-                    f"The user sent an image located at {image_path}. "
-                    f"Please read/view this image file and describe what you see, "
-                    f"then ask if they need anything."
-                )
+            vision_used = False
+
+            # Check if /ocr mode is pending
+            from channels.telegram.commands import _ocr_pending
+            ocr_mode = _ocr_pending.pop(chat_id, False)
+
+            if VISION_ENABLED:
+                from health_probes import is_vision_online
+                if is_vision_online():
+                    try:
+                        from handlers.vision import describe_image
+                        ocr_prompt = (
+                            "Transcribe ALL text visible in this image exactly as written. "
+                            "Preserve layout, line breaks, and formatting. "
+                            "If text appears in columns or tables, reproduce the structure. "
+                            "Include every word, number, label, and caption."
+                        )
+                        custom_prompt = ocr_prompt if ocr_mode else None
+                        description = await describe_image(image_bytes, custom_prompt=custom_prompt)
+                        vision_used = True
+                        preview = description[:200] + ("..." if len(description) > 200 else "")
+                        await update.message.reply_text(f"[Vision]: {preview}")
+                        log.info("[Vision]: %s", preview)
+
+                        if caption.strip():
+                            prompt = (
+                                f"[The user sent an image. Vision analysis: {description}]\n\n"
+                                f"User message: {caption}"
+                            )
+                        else:
+                            prompt = (
+                                f"[The user sent an image. Vision analysis: {description}]\n\n"
+                                f"Respond to what you see in this image."
+                            )
+                    except Exception as e:
+                        log.warning("Vision preprocessing failed, falling back to file: %s", e)
+
+            # Fallback: save to disk and ask LLM to read the file
+            if not vision_used:
+                IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+                image_path = IMAGE_DIR / f"{uuid.uuid4().hex}.jpg"
+                image_path.write_bytes(image_bytes)
+                log.info("Saved image to %s", image_path)
+
+                if caption.strip():
+                    prompt = (
+                        f"The user sent an image located at {image_path}. "
+                        f"Please read/view this image file first, then respond to their message: "
+                        f"{caption}"
+                    )
+                else:
+                    prompt = (
+                        f"The user sent an image located at {image_path}. "
+                        f"Please read/view this image file and describe what you see, "
+                        f"then ask if they need anything."
+                    )
 
             # Prepend reply-to context
             reply_ctx = _build_reply_context(update.message)
@@ -132,7 +175,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await typing_task
             except asyncio.CancelledError:
                 pass
-            # Clean up temp file
+            # Clean up temp file (only exists if vision fallback was used)
             if image_path and image_path.exists():
                 try:
                     image_path.unlink()

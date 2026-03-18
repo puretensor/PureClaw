@@ -87,6 +87,9 @@ ALERT_BOT_TOKEN = os.environ.get("ALERT_BOT_TOKEN", BOT_TOKEN)  # fallback to ma
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_AUTHORIZED_USER_ID = int(os.environ.get("DISCORD_AUTHORIZED_USER_ID", "0"))
 
+# Email channel (disable in Nexus when hal-mail pod takes over)
+EMAIL_CHANNEL_ENABLED = os.environ.get("EMAIL_CHANNEL_ENABLED", "true").lower() in ("true", "1", "yes")
+
 # WhatsApp
 WA_ENABLED = os.environ.get("WA_ENABLED", "false").lower() in ("true", "1", "yes")
 # JSON list of bridge instances: [{"name": "wa-1", "url": "http://...:3100"}, ...]

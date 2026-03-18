@@ -33,6 +33,7 @@ from dispatcher.cards import (
     render_weather,
     render_crypto,
     render_trains,
+    render_commute,
     render_gold,
     render_status,
     render_markets_unified,
@@ -183,6 +184,24 @@ async def handle_trains(from_crs: str, to_crs: str, chat, bot) -> None:
     )
 
 
+async def handle_commute(route: str, chat, bot) -> None:
+    """Fetch commute departures and send card."""
+    from dispatcher.apis.commute import fetch_commute
+    data = await fetch_commute(route)
+    png_buf, caption = render_commute(data)
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("Refresh", callback_data=f"refresh:commute:{route}")
+    ]])
+    await bot.send_photo(
+        chat_id=chat.id,
+        photo=png_buf,
+        caption=caption,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
+
+
 async def handle_status(chat, bot) -> None:
     """Fetch infrastructure status and send card."""
     data = await fetch_status()
@@ -231,6 +250,9 @@ async def refresh_dispatch(category: str, params: str, chat, bot) -> None:
             await handle_trains(parts[0], parts[1], chat, bot)
         else:
             await handle_trains(DEFAULT_FROM, DEFAULT_TO, chat, bot)
+    elif category == "commute":
+        route = params or "central"
+        await handle_commute(route, chat, bot)
     elif category == "status":
         _clear_caches(fetch_status)
         await handle_status(chat, bot)

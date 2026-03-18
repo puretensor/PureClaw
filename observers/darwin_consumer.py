@@ -228,6 +228,7 @@ class DarwinState:
                 cancelled = svc.get("cancelled", False)
                 cancel_reason = svc.get("cancel_reason", "")
                 train_id = svc.get("train_id", "")
+                toc = svc.get("toc", "")
 
             # Find the from_crs calling point
             from_idx = None
@@ -297,6 +298,7 @@ class DarwinState:
                 "cancelled": cancelled,
                 "destination": dest_name,
                 "train_id": train_id,
+                "toc": toc,
                 "sort_key": sort_key,
             })
 
@@ -417,28 +419,213 @@ class DarwinParser:
         """Parse a Darwin message (JSON envelope or raw XML)."""
         self.state.stats["msg_count"] += 1
 
-        # Try JSON envelope first (RDM wraps Darwin in JSON)
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", errors="replace")
 
         try:
             envelope = json.loads(raw)
-            # RDM JSON envelope — inner content is XML string
-            xml_str = envelope.get("data", "") or envelope.get("message", "") or ""
-            if not xml_str and isinstance(envelope, str):
-                xml_str = envelope
-            if xml_str:
-                self._parse_xml(xml_str)
-                return
         except (json.JSONDecodeError, AttributeError):
-            pass
+            # Try raw XML
+            if raw.strip().startswith("<") or raw.strip().startswith("<?"):
+                self._parse_xml(raw)
+            else:
+                log.debug("Darwin: unrecognised message format (len=%d)", len(raw))
+            return
 
-        # Try raw XML
-        if raw.strip().startswith("<") or raw.strip().startswith("<?"):
-            self._parse_xml(raw)
+        # RDM v2 format: outer envelope has "bytes" key containing JSON string
+        bytes_val = envelope.get("bytes", "")
+        if bytes_val and isinstance(bytes_val, str):
+            try:
+                inner = json.loads(bytes_val)
+                if isinstance(inner, dict):
+                    self._parse_json_pport(inner)
+                    return
+            except json.JSONDecodeError:
+                # bytes might be XML string
+                if bytes_val.strip().startswith("<"):
+                    self._parse_xml(bytes_val)
+                    return
+
+        # Legacy format: "data" or "message" key with XML string
+        xml_str = envelope.get("data", "") or envelope.get("message", "") or ""
+        if xml_str:
+            self._parse_xml(xml_str)
+            return
+
+        # Direct JSON Pport (no wrapper)
+        if "uR" in envelope or "ts" in envelope:
+            self._parse_json_pport(envelope)
             return
 
         log.debug("Darwin: unrecognised message format (len=%d)", len(raw))
+
+    # ------------------------------------------------------------------
+    # JSON parsing (RDM v2 JSON topic)
+    # ------------------------------------------------------------------
+
+    def _parse_json_pport(self, data: dict) -> None:
+        """Parse a Darwin Push Port message in JSON format."""
+        ur = data.get("uR")
+        if not ur or not isinstance(ur, dict):
+            return
+
+        # Schedule updates
+        schedules = ur.get("schedule", [])
+        if isinstance(schedules, dict):
+            schedules = [schedules]
+        for sched in schedules:
+            self._parse_json_schedule(sched)
+
+        # Train status updates
+        ts = ur.get("TS")
+        if ts:
+            if isinstance(ts, dict):
+                ts = [ts]
+            for status in ts:
+                self._parse_json_train_status(status)
+
+        # Deactivations
+        deact = ur.get("deactivated")
+        if deact:
+            if isinstance(deact, dict):
+                deact = [deact]
+            for d in deact:
+                rid = d.get("rid", "") if isinstance(d, dict) else ""
+                if rid:
+                    self.state.deactivate(rid)
+
+        # Station messages
+        ow = ur.get("OW")
+        if ow:
+            if isinstance(ow, dict):
+                ow = [ow]
+            for msg in ow:
+                self._parse_json_station_message(msg)
+
+    def _parse_json_schedule(self, sched: dict) -> None:
+        """Parse a schedule object from JSON."""
+        rid = sched.get("rid", "")
+        uid = sched.get("uid", "")
+        ssd = sched.get("ssd", "")
+        toc = sched.get("toc", "")
+        train_id = sched.get("trainId", "")
+
+        if not rid:
+            return
+
+        calling_points = []
+        for cp_type in ("OR", "OPOR", "IP", "OPIP", "PP", "DT", "OPDT"):
+            points = sched.get(cp_type)
+            if points is None:
+                continue
+            if isinstance(points, dict):
+                points = [points]
+            for pt in points:
+                tiploc = pt.get("tpl", "")
+                crs = self.state.resolve_tiploc(tiploc)
+                cp = {
+                    "tiploc": tiploc,
+                    "crs": crs,
+                    "type": cp_type,
+                    "pta": pt.get("pta", ""),
+                    "ptd": pt.get("ptd", ""),
+                    "wta": pt.get("wta", ""),
+                    "wtd": pt.get("wtd", ""),
+                    "activity": pt.get("act", ""),
+                }
+                if crs:
+                    cp["name"] = _STATION_NAMES_CACHE.get(crs, crs)
+                else:
+                    cp["name"] = tiploc
+                calling_points.append(cp)
+
+        if calling_points:
+            self.state.update_schedule(rid, uid, ssd, toc, train_id, calling_points)
+
+    def _parse_json_train_status(self, ts: dict) -> None:
+        """Parse a train status object from JSON."""
+        rid = ts.get("rid", "")
+        if not rid:
+            return
+
+        locations = []
+        cancelled = False
+        cancel_reason = ""
+        late_reason = ""
+
+        locs = ts.get("Location", [])
+        if isinstance(locs, dict):
+            locs = [locs]
+        for loc_data in locs:
+            tiploc = loc_data.get("tpl", "")
+            loc = {
+                "tiploc": tiploc,
+                "pta": loc_data.get("pta", ""),
+                "ptd": loc_data.get("ptd", ""),
+            }
+            # Arrival forecast/actual
+            arr = loc_data.get("arr")
+            if isinstance(arr, dict):
+                loc["eta"] = arr.get("et", "")
+                loc["ata"] = arr.get("at", "")
+                loc["arr_src"] = arr.get("src", "")
+            # Departure forecast/actual
+            dep = loc_data.get("dep")
+            if isinstance(dep, dict):
+                loc["etd"] = dep.get("et", "")
+                loc["atd"] = dep.get("at", "")
+                loc["dep_src"] = dep.get("src", "")
+            # Pass-through
+            pas = loc_data.get("pass")
+            if isinstance(pas, dict):
+                loc["etp"] = pas.get("et", "")
+                loc["atp"] = pas.get("at", "")
+            # Platform — can be string or dict with "" key
+            plat = loc_data.get("plat")
+            if isinstance(plat, str):
+                loc["plat"] = plat
+            elif isinstance(plat, dict):
+                loc["plat"] = plat.get("", "")
+                loc["plat_suppressed"] = plat.get("platsup", "false") == "true"
+                loc["plat_confirmed"] = plat.get("conf", "false") == "true"
+            # Length
+            length = loc_data.get("length")
+            if isinstance(length, str):
+                loc["length"] = length
+            elif isinstance(length, dict):
+                loc["length"] = length.get("", "")
+
+            locations.append(loc)
+
+        # Late/cancel reasons
+        lr = ts.get("LateReason")
+        if isinstance(lr, dict):
+            late_reason = lr.get("", "") or lr.get("code", "")
+        elif isinstance(lr, str):
+            late_reason = lr
+
+        cr = ts.get("CancelReason")
+        if isinstance(cr, dict):
+            cancel_reason = cr.get("", "") or cr.get("code", "")
+            cancelled = True
+        elif isinstance(cr, str):
+            cancel_reason = cr
+            cancelled = True
+
+        self.state.update_status(rid, locations, cancelled, cancel_reason, late_reason)
+
+    def _parse_json_station_message(self, msg: dict) -> None:
+        """Parse a station message from JSON."""
+        msg_id = msg.get("id", "")
+        stations = msg.get("Station", [])
+        if isinstance(stations, dict):
+            stations = [stations]
+        crs_list = [s.get("crs", "") for s in stations if s.get("crs")]
+        text = msg.get("Msg", "")
+        if isinstance(text, dict):
+            text = text.get("", "")
+        if crs_list and text:
+            self.state.add_station_message(msg_id, crs_list, text)
 
     def _parse_xml(self, xml_str: str) -> None:
         """Parse Darwin Push Port XML."""
@@ -615,13 +802,17 @@ class DarwinConsumer(Observer):
     def __init__(self):
         self.bootstrap = os.environ.get(
             "DARWIN_KAFKA_BOOTSTRAP",
-            "pkc-l6wr6.europe-west2.gcp.confluent.cloud:9092",
+            "pkc-z3p1v0.europe-west2.gcp.confluent.cloud:9092",
         )
         self.api_key = os.environ.get("DARWIN_KAFKA_KEY", "")
         self.api_secret = os.environ.get("DARWIN_KAFKA_SECRET", "")
         self.topic = os.environ.get(
             "DARWIN_KAFKA_TOPIC",
-            "prod-1010-Darwin-Train-Information-Push-Port-IIII1_1-JSON",
+            "prod-1010-Darwin-Train-Information-Push-Port-IIII2_0-JSON",
+        )
+        self.group_id = os.environ.get(
+            "DARWIN_KAFKA_GROUP",
+            "SC-79bfe190-2ad6-4cb2-90df-c4999e6cdccd",
         )
         self.snapshot_path = os.environ.get(
             "DARWIN_SNAPSHOT_PATH",
@@ -681,7 +872,7 @@ class DarwinConsumer(Observer):
             "sasl.mechanisms": "PLAIN",
             "sasl.username": self.api_key,
             "sasl.password": self.api_secret,
-            "group.id": "nexus-darwin-consumer",
+            "group.id": self.group_id,
             "auto.offset.reset": "latest",
             "enable.auto.commit": True,
             "session.timeout.ms": 45000,
