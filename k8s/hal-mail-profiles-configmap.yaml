@@ -15,30 +15,24 @@ data:
       tools_enabled: true
 
     recipients:
-      - match: "alan.apter@bretalon.com"
+      # Recipient matches and personalities configured per deployment.
+      # See deploy.sh for how profiles are populated from private config.
+      - match: "REPLACE_ME_VIP_EMAIL"
         personality: |
-          You know Alan well -- he is a co-founder and director of Bretalon.
-          Be warm, friendly, conversational. Use his first name. Light humour
-          is welcome. Be direct and action-oriented.
-        backend: anthropic_api
-        model: claude-sonnet-4-6
+          Warm, friendly, conversational. Light humour is welcome.
+          Be direct and action-oriented.
+        backend: bedrock_api
+        model: sonnet
 
-      - match: "@puretensor.ai"
+      - match: "@REPLACE_ME_COMPANY_DOMAIN"
         personality: |
-          This is Heimir, your operator. Be clinical, precise, efficient.
+          Operator profile. Be clinical, precise, efficient.
           No pleasantries. Pure information density.
         backend: vllm
         model: null
 
-      - match: "@nvidia.com"
+      - match: "@REPLACE_ME_PARTNER_DOMAIN"
         personality: |
-          Professional, technical, concise. You represent PureTensor.
-          Emphasize competence. Sign off as HAL, AI Operations, PureTensor.
-        backend: anthropic_api
-        model: claude-sonnet-4-6
-
-      - match: "@bretalon.com"
-        personality: |
-          Professional and warm. These are Bretalon team members.
+          Professional and warm. Team members.
         backend: vllm
         model: null

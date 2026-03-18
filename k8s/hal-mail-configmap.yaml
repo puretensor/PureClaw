@@ -6,7 +6,7 @@ metadata:
 data:
   # Default engine (overridable per recipient profile)
   ENGINE_BACKEND: "vllm"
-  VLLM_URL: "http://100.121.42.54:5000/v1"
+  VLLM_URL: "http://REPLACE_ME_TC_HOST:5000/v1"
   VLLM_MODEL: "nvidia/nemotron-3-super"
   VLLM_MAX_TOKENS: "32768"
   VLLM_TOOLS_ENABLED: "true"
@@ -41,4 +41,4 @@ data:
   CLAUDE_CWD: "/app"
 
   # TC services (via Tailscale)
-  WHISPER_URL: "http://100.121.42.54:9000/transcribe"
+  WHISPER_URL: "http://REPLACE_ME_TC_HOST:9000/transcribe"

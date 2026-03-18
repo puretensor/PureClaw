@@ -334,7 +334,7 @@ class WhatsAppChannel(Channel):
                 group_ctx = f"Group: {group_label}\n"
 
             extra_sp = WA_SYSTEM_PROMPT_TEMPLATE.format(
-                user_name="Heimir",
+                user_name=os.environ.get("OPERATOR_NAME", "Operator"),
                 contact_name=push_name or display_name,
                 contact_jid=jid,
                 group_context=group_ctx,

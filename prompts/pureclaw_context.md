@@ -9,22 +9,22 @@
 All nodes reachable by hostname via SSH config. Use `ssh <hostname> '<command>'`.
 
 *Tier 0 — The Bridge*
-• tensor-core — AMD TR PRO 9975WX 32C, 512 GB DDR5, 2x RTX PRO 6000 Blackwell (96 GB each). Runs vLLM, Whisper, XTTS, Claude Code. User: `puretensorai`.
+• tensor-core — AMD TR PRO 9975WX 32C, 512 GB DDR5, 2x RTX PRO 6000 Blackwell (96 GB each). Runs vLLM, Whisper, XTTS, Claude Code.
 
 *Tier 1 — Engine Room*
-• fox-n0 — AMD TR 7970X 32C, 256 GB DDR5, 14 TB NVMe. Burst compute (Docker/Ollama). Often powered off. User: `root`.
-• fox-n1 — AMD EPYC 7443 24C, 503 GB DDR4, 8 TB ZFS. K3s host. Runs this pod. User: `root`.
+• fox-n0 — AMD TR 7970X 32C, 256 GB DDR5, 14 TB NVMe. Burst compute (Docker/Ollama). Often powered off.
+• fox-n1 — AMD EPYC 7443 24C, 503 GB DDR4, 8 TB ZFS. K3s host. Runs this pod.
 
 *Tier 2 — Ceph Cluster (Supermicro 1U, Xeon E3-1270 v6, 32 GB DDR4)*
-• arx1, arx2, arx3, arx4 — Ceph v19.2.3 Squid, 16 OSDs, 170 TiB raw (~4% used). User: `root`.
+• arx1, arx2, arx3, arx4 — Ceph v19.2.3 Squid, 16 OSDs, 170 TiB raw (~4% used).
 
 *Tier 3 — Infrastructure*
-• mon1 — Dell OptiPlex, i7-7700T. Gitea (:3002), Uptime Kuma (:3001), WhatsApp translator, Bretalon report bot. User: `root`.
-• mon2 — Dell OptiPlex, i5-6500T. Grafana (:3000), Prometheus (:9090), Loki (:3100), Alertmanager (:9093). User: `root`.
-• mon3 — Raspberry Pi 5. Node exporter only. Often off. User: `root`.
+• mon1 — Dell OptiPlex, i7-7700T. Gitea, Uptime Kuma, WhatsApp translator, Bretalon report bot.
+• mon2 — Dell OptiPlex, i5-6500T. Grafana, Prometheus, Loki, Alertmanager.
+• mon3 — Raspberry Pi 5. Node exporter only. Often off.
 
 *Tier 4 — HAL Perception (Supermicro 1U, Xeon E3, 32-64 GB DDR4)*
-• hal-0, hal-1, hal-2 — Perception nodes. Often powered off. User: `hal-0`, `hal-1`, `hal-2`. Password from env.
+• hal-0, hal-1, hal-2 — Perception nodes. Often powered off. Credentials from env.
 
 *GCP*
 • e2-micro — 12 static sites, nginx, certbot.
@@ -99,7 +99,7 @@ These scripts live on tensor-core. Access them with: `ssh tensor-core 'cd ~/.con
 ## Monitoring & Observability
 
 *Prometheus:* Available via mon2 — query via PromQL.
-`ssh tensor-core 'curl -s "http://mon2:9090/api/v1/query?query=<PROMQL>" | python3 -m json.tool'`
+`ssh tensor-core 'curl -s "${PROMETHEUS_URL}/api/v1/query?query=<PROMQL>" | python3 -m json.tool'`
 
 Common queries:
 - Node up: `up{job="node"}`
@@ -109,9 +109,9 @@ Common queries:
 - GPU temp: `nvidia_smi_temperature_gpu`
 - GPU VRAM: `nvidia_smi_memory_used_bytes`
 
-*Loki (logs):* Available via mon2:3100
-*Grafana:* Available via mon2:3000 (credentials from env)
-*Alertmanager:* Available via mon2:9093
+*Loki (logs):* Available via mon2
+*Grafana:* Available via mon2 (credentials from env)
+*Alertmanager:* Available via mon2
 
 ## Key Services
 
@@ -125,9 +125,9 @@ Common queries:
 | Ceph cluster | arx1-4 | `ssh arx1 'ceph status'` |
 | K3s | fox-n1 | `ssh fox-n1 'kubectl get pods -A'` |
 | Gitea | mon1 | Configured via GITEA_URL env |
-| Nextcloud | fox-n1 | K3s, NodePort 30880 |
-| Vaultwarden | fox-n1 | K3s, NodePort 30800, https://vault.puretensor.com |
-| Uptime Kuma | mon1 | Available via mon1:3001 |
+| Nextcloud | fox-n1 | K3s (port from env) |
+| Vaultwarden | fox-n1 | K3s (port from env) |
+| Uptime Kuma | mon1 | Available via mon1 |
 
 ## Power Management
 
@@ -183,7 +183,7 @@ addMapping("DejaVu", 1, 1, "DejaVu-BoldItalic")
 *Paragraph text MUST be XML-escaped:* `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`. reportlab's Paragraph parser is XML-based and will crash on raw `&` or `<`.
 
 *Upload:* `ssh tensor-core 'python3 ~/.config/puretensor/gdrive.py ops upload --file <path> --folder <folder_id>'`
-Drive folder IDs: `10_Daily_Reports`=`1Wx_dD_ADIBVOIv4cFS9uCYj9ou5kox-T`, `11_Technical_Reports`=`1hWoMNjvSoMfZOomKXR5hBOoYdFbUbFnn`, `12_Business_Investor`=`1D5s3PWwv4LNZGkB9KS0hq5ccwf5WRy4l`, `15_Research`=`1frodxbgy6yJEVhk4VFKFEyzydFRucFKB`.
+Drive folder IDs: configured in env vars (GDRIVE_DAILY_REPORTS, GDRIVE_TECHNICAL, GDRIVE_BUSINESS, GDRIVE_RESEARCH).
 
 *Immutability:* Created PDFs are final. Errors = new version (v1.1, v2.0). Never alter after creation.
 
