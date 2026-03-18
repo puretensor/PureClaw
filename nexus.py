@@ -32,7 +32,8 @@ def _build_observer_registry():
         ("observers.morning_brief", "MorningBriefObserver"),
         # node_health disabled — alerting handled by Alertmanager on mon2
         # ("observers.node_health", "NodeHealthObserver"),
-        ("observers.daily_snippet", "DailySnippetObserver"),
+        # daily_snippet disabled — extracted to standalone K8s CronJob on arx2
+        # ("observers.daily_snippet", "DailySnippetObserver"),
         ("observers.bretalon_review", "BretalonReviewObserver"),
         ("observers.git_push", "GitPushObserver"),
         ("observers.darwin_consumer", "DarwinConsumer"),
@@ -79,12 +80,18 @@ async def main():
 
     # Import here to ensure config/db are ready
     from channels.telegram import TelegramChannel
-    from channels.email_in import EmailInputChannel
-    from config import DISCORD_BOT_TOKEN, WA_ENABLED
+    from config import DISCORD_BOT_TOKEN, WA_ENABLED, EMAIL_CHANNEL_ENABLED
 
     telegram = TelegramChannel()
     registry = _build_observer_registry()
-    email_in = EmailInputChannel()
+
+    # Email input channel — can be disabled when hal-mail pod takes over
+    email_in = None
+    if EMAIL_CHANNEL_ENABLED:
+        from channels.email_in import EmailInputChannel
+        email_in = EmailInputChannel()
+    else:
+        log.info("Email channel disabled (EMAIL_CHANNEL_ENABLED=false)")
 
     # Discord — only start if token is configured
     discord_channel = None
@@ -134,8 +141,9 @@ async def main():
         await telegram.start()
 
         # Start email input channel (needs bot reference for notifications)
-        email_in._bot = telegram.app.bot
-        await email_in.start()
+        if email_in:
+            email_in._bot = telegram.app.bot
+            await email_in.start()
 
         # Start Discord channel (if configured)
         if discord_channel:
@@ -191,7 +199,8 @@ async def main():
             await wa_channel.stop()
         if discord_channel:
             await discord_channel.stop()
-        await email_in.stop()
+        if email_in:
+            await email_in.stop()
         await telegram.stop()
         log.info("NEXUS stopped.")
 

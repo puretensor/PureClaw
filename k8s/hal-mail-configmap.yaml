@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hal-mail-config
+  namespace: nexus
+data:
+  # Default engine (overridable per recipient profile)
+  ENGINE_BACKEND: "vllm"
+  VLLM_URL: "http://100.121.42.54:5000/v1"
+  VLLM_MODEL: "nvidia/nemotron-3-super"
+  VLLM_MAX_TOKENS: "32768"
+  VLLM_TOOLS_ENABLED: "true"
+  VLLM_TOOL_MAX_ITER: "10"
+  VLLM_TOOL_TIMEOUT: "60"
+  VLLM_TOTAL_TIMEOUT: "300"
+
+  # Anthropic (for VIP recipients)
+  ANTHROPIC_MODEL: "claude-sonnet-4-6"
+  ANTHROPIC_MAX_TOKENS: "4096"
+  ANTHROPIC_TOOLS_ENABLED: "true"
+  ANTHROPIC_TOOL_MAX_ITER: "15"
+  ANTHROPIC_TOOL_TIMEOUT: "30"
+  ANTHROPIC_TOTAL_TIMEOUT: "300"
+
+  # Paths
+  DB_PATH: "/data/nexus.db"
+  MEMORY_DIR: "/data/memory"
+  RECIPIENT_PROFILES_PATH: "/app/recipient_profiles.yaml"
+
+  # Polling
+  POLL_INTERVAL: "120"
+  HEALTH_PORT: "9877"
+
+  # Shadow mode — set to "true" to poll and log without sending replies
+  DRY_RUN: "true"
+
+  # Agent identity — personality is per-profile, not global
+  AGENT_NAME: "HAL"
+
+  # Claude fallback config
+  CLAUDE_CWD: "/app"
+
+  # TC services (via Tailscale)
+  WHISPER_URL: "http://100.121.42.54:9000/transcribe"

@@ -1,0 +1,74 @@
+# Nexus backup CronJob — syncs local data to Ceph every 6 hours
+# If Ceph is down, the job simply fails and retries next cycle.
+# Nexus continues running on local storage regardless.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nexus-backup-to-ceph
+  namespace: nexus
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/hostname: fox-n1
+          containers:
+          - name: backup
+            image: busybox:1.36
+            command:
+            - sh
+            - -c
+            - |
+              echo "=== Nexus backup to Ceph ==="
+              echo "Syncing nexus-data..."
+              cp -a /local-data/. /ceph-data/ 2>&1
+              echo "Syncing claude-home..."
+              cp -a /local-claude/. /ceph-claude/ 2>&1
+              echo "Syncing nexus-output..."
+              cp -a /local-output/. /ceph-output/ 2>&1
+              echo "=== Backup complete ==="
+              du -sh /ceph-data /ceph-claude /ceph-output
+            volumeMounts:
+            - name: local-data
+              mountPath: /local-data
+              readOnly: true
+            - name: local-claude
+              mountPath: /local-claude
+              readOnly: true
+            - name: local-output
+              mountPath: /local-output
+              readOnly: true
+            - name: ceph-data
+              mountPath: /ceph-data
+            - name: ceph-claude
+              mountPath: /ceph-claude
+            - name: ceph-output
+              mountPath: /ceph-output
+          volumes:
+          - name: local-data
+            persistentVolumeClaim:
+              claimName: nexus-data-local
+          - name: local-claude
+            persistentVolumeClaim:
+              claimName: claude-home-local
+          - name: local-output
+            persistentVolumeClaim:
+              claimName: nexus-output-local
+          - name: ceph-data
+            persistentVolumeClaim:
+              claimName: nexus-data
+          - name: ceph-claude
+            persistentVolumeClaim:
+              claimName: claude-home
+          - name: ceph-output
+            persistentVolumeClaim:
+              claimName: nexus-output

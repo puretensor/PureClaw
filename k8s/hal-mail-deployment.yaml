@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hal-mail
+  namespace: nexus
+  labels:
+    app: hal-mail
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Only one IMAP poller allowed
+  selector:
+    matchLabels:
+      app: hal-mail
+  template:
+    metadata:
+      labels:
+        app: hal-mail
+    spec:
+      # Required on kernel 6.17-pve — AppArmor blocks socket creation
+      securityContext:
+        appArmorProfile:
+          type: Unconfined
+      initContainers:
+        # Copy OAuth tokens from read-only Secret to writable emptyDir
+        # gmail.py needs write access for automatic token refresh
+        - name: copy-tokens
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              cp /secrets/oauth-tokens/* /tokens/ 2>/dev/null || true
+              chmod 600 /tokens/* 2>/dev/null || true
+              chown -R 1000:1000 /tokens 2>/dev/null || true
+          volumeMounts:
+            - name: oauth-tokens-secret
+              mountPath: /secrets/oauth-tokens
+              readOnly: true
+            - name: oauth-tokens-writable
+              mountPath: /tokens
+
+        # Fix PVC ownership (runs as root)
+        - name: fix-perms
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command:
+            - sh
+            - -c
+            - |
+              chown -R 1000:1000 /data 2>/dev/null || true
+          volumeMounts:
+            - name: nexus-data
+              mountPath: /data
+
+      containers:
+        - name: hal-mail
+          image: nexus:v2.1.0
+          imagePullPolicy: Never
+          command: ["python3", "-m", "hal_mail"]
+          ports:
+            - containerPort: 9877
+              name: health
+          envFrom:
+            - secretRef:
+                name: nexus-env
+            - configMapRef:
+                name: hal-mail-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9877
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9877
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          volumeMounts:
+            # Shared persistent data (SQLite DB, memory)
+            - name: nexus-data
+              mountPath: /data
+            # Google OAuth tokens (writable for refresh)
+            - name: oauth-tokens-writable
+              mountPath: /app/.config/puretensor/gdrive_tokens
+            # Recipient profiles (hot-reloadable via ConfigMap update)
+            - name: recipient-profiles
+              mountPath: /app/recipient_profiles.yaml
+              subPath: recipient_profiles.yaml
+              readOnly: true
+            # Security policy (for redaction)
+            - name: security-policy
+              mountPath: /app/security/policy.yaml
+              subPath: policy.yaml
+              readOnly: true
+            # Synced PureClaw memory for context injection
+            - name: report-sync
+              mountPath: /sync
+              readOnly: true
+
+      volumes:
+        - name: nexus-data
+          persistentVolumeClaim:
+            claimName: nexus-data-local
+        - name: oauth-tokens-secret
+          secret:
+            secretName: oauth-tokens
+            defaultMode: 0600
+        - name: oauth-tokens-writable
+          emptyDir: {}
+        - name: recipient-profiles
+          configMap:
+            name: hal-mail-profiles
+            defaultMode: 0644
+        - name: security-policy
+          configMap:
+            name: security-policy
+            defaultMode: 0644
+        - name: report-sync
+          hostPath:
+            path: /fox_fast/puretensor-sync
+            type: DirectoryOrCreate

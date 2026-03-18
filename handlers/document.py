@@ -80,6 +80,7 @@ def _build_document_prompt(
     file_path: str,
     file_bytes: bytes,
     caption: str | None,
+    vision_description: str | None = None,
 ) -> tuple[str, bool]:
     """Build the prompt for Claude based on file type.
 
@@ -111,6 +112,12 @@ def _build_document_prompt(
         return prompt, False
 
     if _is_image(mime_type):
+        if vision_description:
+            prompt = (
+                f"[The user sent an image file: {filename}. "
+                f"Vision analysis: {vision_description}]\n\n{user_text}"
+            )
+            return prompt, True  # can cleanup, content is inlined as text
         prompt = (
             f"The user sent an image file saved at {file_path}. "
             f"Please analyze it using your Read tool.\n\n{user_text}"
@@ -195,10 +202,38 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
 
+            # Vision preprocessing for image documents
+            vision_desc = None
+            if _is_image(mime_type):
+                # Check if /ocr mode is pending
+                from channels.telegram.commands import _ocr_pending
+                ocr_mode = _ocr_pending.pop(chat_id, False)
+
+                from config import VISION_ENABLED
+                if VISION_ENABLED:
+                    from health_probes import is_vision_online
+                    if is_vision_online():
+                        try:
+                            from handlers.vision import describe_image
+                            ocr_prompt = (
+                                "Transcribe ALL text visible in this image exactly as written. "
+                                "Preserve layout, line breaks, and formatting. "
+                                "If text appears in columns or tables, reproduce the structure. "
+                                "Include every word, number, label, and caption."
+                            )
+                            custom_prompt = ocr_prompt if ocr_mode else None
+                            vision_desc = await describe_image(file_bytes, custom_prompt=custom_prompt)
+                            preview = vision_desc[:200] + ("..." if len(vision_desc) > 200 else "")
+                            await update.message.reply_text(f"[Vision]: {preview}")
+                            log.info("[Vision/doc]: %s", preview)
+                        except Exception as e:
+                            log.warning("Vision preprocessing failed for document, falling back: %s", e)
+
             # Build prompt
             caption = update.message.caption
             prompt_text, should_cleanup = _build_document_prompt(
-                filename, mime_type, file_path, file_bytes, caption
+                filename, mime_type, file_path, file_bytes, caption,
+                vision_description=vision_desc,
             )
 
             # Session info

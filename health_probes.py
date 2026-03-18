@@ -17,6 +17,7 @@ log = logging.getLogger("nexus")
 # Probe config
 _WHISPER_URL = os.environ.get("WHISPER_URL", "")
 _TTS_URL = os.environ.get("TTS_URL", "")
+_VISION_URL = os.environ.get("VISION_URL", "")
 _PROBE_INTERVAL = int(os.environ.get("HEALTH_PROBE_INTERVAL", "30"))
 _FAILURE_THRESHOLD = 3
 
@@ -27,8 +28,10 @@ class TCHealthProbe:
     def __init__(self):
         self._whisper_online = True
         self._tts_online = True
+        self._vision_online = True
         self._whisper_failures = 0
         self._tts_failures = 0
+        self._vision_failures = 0
         self._running = False
 
     @property
@@ -38,6 +41,10 @@ class TCHealthProbe:
     @property
     def tts_online(self) -> bool:
         return self._tts_online
+
+    @property
+    def vision_online(self) -> bool:
+        return self._vision_online
 
     async def _check_endpoint(self, url: str, name: str) -> bool:
         """HTTP GET to an endpoint, return True if reachable."""
@@ -58,9 +65,10 @@ class TCHealthProbe:
             return False
 
     async def _probe_once(self):
-        """Run one probe cycle for both services."""
+        """Run one probe cycle for all services."""
         whisper_ok = await self._check_endpoint(_WHISPER_URL, "whisper")
         tts_ok = await self._check_endpoint(_TTS_URL, "tts")
+        vision_ok = await self._check_endpoint(_VISION_URL, "vision") if _VISION_URL else None
 
         # Whisper
         if whisper_ok:
@@ -85,6 +93,19 @@ class TCHealthProbe:
             if self._tts_failures >= _FAILURE_THRESHOLD and self._tts_online:
                 log.warning("TC TTS marked OFFLINE after %d failures", self._tts_failures)
                 self._tts_online = False
+
+        # Vision
+        if vision_ok is not None:
+            if vision_ok:
+                if not self._vision_online:
+                    log.info("TC Vision is back ONLINE")
+                self._vision_online = True
+                self._vision_failures = 0
+            else:
+                self._vision_failures += 1
+                if self._vision_failures >= _FAILURE_THRESHOLD and self._vision_online:
+                    log.warning("TC Vision marked OFFLINE after %d failures", self._vision_failures)
+                    self._vision_online = False
 
     async def run_loop(self):
         """Main probe loop — runs until cancelled."""
@@ -126,3 +147,10 @@ def is_tc_tts_online() -> bool:
     if _probe is None:
         return True
     return _probe.tts_online
+
+
+def is_vision_online() -> bool:
+    """Check if Vision endpoint is reachable. Returns True if probe hasn't started yet."""
+    if _probe is None:
+        return True
+    return _probe.vision_online

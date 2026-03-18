@@ -48,7 +48,12 @@ OUTPUT_DIR = Path("/output/daily")
 
 # TC Tailscale IP for SSH checks
 TC_HOST = os.environ.get("TC_SSH_HOST", "localhost")
-VLLM_URL = os.environ.get("VLLM_URL", "http://localhost:8200/health")
+_vllm_env = os.environ.get("VLLM_URL", "http://localhost:5000/health")
+# Derive health URL: strip /v1 path if present, append /health
+if _vllm_env.rstrip("/").endswith("/v1"):
+    VLLM_URL = _vllm_env.rstrip("/").rsplit("/v1", 1)[0] + "/health"
+else:
+    VLLM_URL = _vllm_env
 
 
 class PipelineWatchdog(Observer):
@@ -257,7 +262,8 @@ class PipelineWatchdog(Observer):
                 f"(HTTP 000 / connection refused)"
             )
         elif status == "200":
-            healthy.append("vLLM: healthy (port 8200)")
+            port = VLLM_URL.split("://")[-1].split("/")[0].split(":")[-1]
+            healthy.append(f"vLLM: healthy (port {port})")
         else:
             alerts.append(f"vLLM health check returned HTTP {status}")
 

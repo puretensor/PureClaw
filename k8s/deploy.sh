@@ -266,11 +266,38 @@ echo "Waiting for pod to start..."
 ssh "$FOX_N1" "kubectl -n nexus rollout status deployment/nexus --timeout=120s" || true
 
 echo ""
+
+# -------------------------------------------------------
+# Phase 6: Deploy hal-mail (email pod with per-recipient profiles)
+# -------------------------------------------------------
+echo "[6] Deploying hal-mail..."
+
+scp "$NEXUS_DIR/k8s/hal-mail-configmap.yaml" "$FOX_N1:/tmp/hal-mail-cm.yaml"
+scp "$NEXUS_DIR/k8s/hal-mail-profiles-configmap.yaml" "$FOX_N1:/tmp/hal-mail-profiles.yaml"
+scp "$NEXUS_DIR/k8s/hal-mail-deployment.yaml" "$FOX_N1:/tmp/hal-mail-deploy.yaml"
+
+ssh "$FOX_N1" "kubectl apply -f /tmp/hal-mail-cm.yaml && \
+               kubectl apply -f /tmp/hal-mail-profiles.yaml && \
+               kubectl apply -f /tmp/hal-mail-deploy.yaml"
+
+echo "  Restarting hal-mail pod..."
+ssh "$FOX_N1" "kubectl -n nexus rollout restart deployment/hal-mail"
+
+echo "Waiting for hal-mail to start..."
+ssh "$FOX_N1" "kubectl -n nexus rollout status deployment/hal-mail --timeout=120s" || true
+
+echo ""
 echo "=== Deploy complete ==="
 ssh "$FOX_N1" "kubectl get pods -n nexus -o wide"
 echo ""
 echo "Next steps:"
 echo "  1. Check logs: ssh fox-n1 'kubectl logs -n nexus deploy/nexus --tail=50'"
-echo "  2. Test via Telegram: send 'status' to @puretensor_claude_bot"
-echo "  3. Stop TC nexus: sudo systemctl stop nexus && sudo systemctl disable nexus"
-echo "  4. Update Gitea webhook to http://YOUR_FOX_N1_IP:30876/"
+echo "  2. Check hal-mail: ssh fox-n1 'kubectl logs -n nexus deploy/hal-mail --tail=50'"
+echo "  3. Test via Telegram: send 'status' to @puretensor_claude_bot"
+echo "  4. Stop TC nexus: sudo systemctl stop nexus && sudo systemctl disable nexus"
+echo "  5. Update Gitea webhook to http://YOUR_FOX_N1_IP:30876/"
+echo ""
+echo "hal-mail rollout:"
+echo "  Phase A (current): DRY_RUN=true — shadow mode, both running"
+echo "  Phase B: Set EMAIL_CHANNEL_ENABLED=false in nexus-config, DRY_RUN=false in hal-mail-config"
+echo "  Phase C: Steady state — update profiles via: kubectl apply -f hal-mail-profiles-configmap.yaml"

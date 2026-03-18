@@ -346,6 +346,88 @@ def render_trains(data: dict) -> tuple[io.BytesIO, str]:
     return card.finalize(), caption
 
 
+ACCENT_COMMUTE = "#7c4dff"
+
+
+def render_commute(data: dict) -> tuple[io.BytesIO, str]:
+    """Render commute card with multiple route sections.
+
+    data keys: route ('central'|'riverside'), sections (list of
+               {label, departures: [{scheduled, expected, platform, status, ...}]})
+    """
+    sections = data.get("sections", [])
+    route = data.get("route", "commute")
+
+    # Calculate height: header(52) + per section(section_title(28) + table_header(24) + rows*32 + gap(8))
+    total_rows = 0
+    for sec in sections:
+        deps = sec.get("departures", [])
+        total_rows += max(len(deps), 1)  # at least 1 row for "no data" message
+
+    height = 52 + len(sections) * (28 + 24 + 8) + total_rows * ROW_HEIGHT + 28
+
+    if route == "central":
+        title = "Windsor Central \u2192 London"
+        subtitle = "via Slough (Elizabeth line + GWR)"
+    else:
+        title = "Windsor Riverside \u2192 Waterloo"
+        subtitle = "South Western Railway"
+
+    card = CardRenderer(height, ACCENT_COMMUTE)
+    card.draw_header(title, subtitle)
+
+    cols = [("TIME", PADDING), ("PLAT", 120), ("STATUS", 200), ("DEST", 380)]
+
+    for i, sec in enumerate(sections):
+        if i > 0:
+            card.y += 4
+
+        card.draw_section_title(sec.get("label", ""))
+        card.draw_table_header(cols)
+
+        deps = sec.get("departures", [])
+        if not deps:
+            card.draw.text(
+                (PADDING, card.y),
+                "Awaiting data...",
+                fill=TEXT_MUTED,
+                font=_font(13),
+            )
+            card.y += ROW_HEIGHT
+        else:
+            for dep in deps:
+                cancelled = dep.get("cancelled", False)
+                status = dep.get("status", "")
+                if cancelled:
+                    color = RED
+                    status = "Cancelled"
+                elif status.lower() in ("on time", ""):
+                    color = GREEN
+                    status = status or "On Time"
+                else:
+                    color = AMBER
+
+                dest = dep.get("destination", "")
+                # Truncate long destination names
+                if len(dest) > 18:
+                    dest = dest[:17] + "\u2026"
+
+                cells = [
+                    (dep.get("scheduled", "?"), PADDING, TEXT_PRIMARY),
+                    (dep.get("platform", "-"), 120, TEXT_SECONDARY),
+                    (status, 200, color),
+                    (dest, 380, TEXT_SECONDARY),
+                ]
+                card.draw_table_row(cells)
+
+    total_deps = sum(len(s.get("departures", [])) for s in sections)
+    caption = (
+        f"\U0001f686 <b>{title}</b>\n"
+        f"{total_deps} departure{'s' if total_deps != 1 else ''} shown"
+    )
+    return card.finalize(), caption
+
+
 def render_gold(data: dict) -> tuple[io.BytesIO, str]:
     """Render gold/silver card (legacy, kept for potential standalone use).
 
