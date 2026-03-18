@@ -28,30 +28,41 @@ def _build_observer_registry():
     registry = ObserverRegistry()
 
     observers = [
-        ("observers.email_digest", "EmailDigestObserver"),
-        ("observers.morning_brief", "MorningBriefObserver"),
+        # email_digest extracted to standalone K8s CronJob on arx1
+        # ("observers.email_digest", "EmailDigestObserver"),
+        # morning_brief extracted to standalone K8s CronJob on arx1
+        # ("observers.morning_brief", "MorningBriefObserver"),
         # node_health disabled — alerting handled by Alertmanager on mon2
         # ("observers.node_health", "NodeHealthObserver"),
         # daily_snippet disabled — extracted to standalone K8s CronJob on arx2
         # ("observers.daily_snippet", "DailySnippetObserver"),
-        ("observers.bretalon_review", "BretalonReviewObserver"),
+        # bretalon_review extracted to standalone K8s CronJob on arx1
+        # ("observers.bretalon_review", "BretalonReviewObserver"),
         ("observers.git_push", "GitPushObserver"),
         ("observers.darwin_consumer", "DarwinConsumer"),
         ("observers.followup_reminder", "FollowupReminderObserver"),
         # alertmanager_monitor disabled — alerts suppressed from HAL interface
         # ("observers.alertmanager_monitor", "AlertmanagerMonitorObserver"),
-        ("observers.cyber_threat_feed", "CyberThreatFeedObserver"),
+        # cyber_threat_feed extracted to standalone K8s CronJob on arx4
+        # ("observers.cyber_threat_feed", "CyberThreatFeedObserver"),
         # intel_briefing disabled — replaced by intel_deep_analysis which
         # generates both full analysis articles and summary briefing cards
         # ("observers.intel_briefing", "IntelBriefingObserver"),
-        ("observers.intel_deep_analysis", "IntelDeepAnalysisObserver"),
+        # intel_deep_analysis extracted to standalone K8s CronJob on arx4
+        # ("observers.intel_deep_analysis", "IntelDeepAnalysisObserver"),
         ("observers.memory_sync", "MemorySyncObserver"),
-        ("observers.daily_report", "DailyReportObserver"),
-        ("observers.doc_compiler", "DocCompilerObserver"),
-        ("observers.weekly_report", "WeeklyReportObserver"),
-        ("observers.git_security_audit", "GitSecurityAuditObserver"),
-        ("observers.git_auto_sync", "GitAutoSyncObserver"),
-        ("observers.github_activity", "GitHubActivityObserver"),
+        # daily_report extracted to standalone K8s CronJob on fox-n1
+        # ("observers.daily_report", "DailyReportObserver"),
+        # doc_compiler extracted to standalone K8s CronJob on fox-n1
+        # ("observers.doc_compiler", "DocCompilerObserver"),
+        # weekly_report extracted to standalone K8s CronJob on fox-n1
+        # ("observers.weekly_report", "WeeklyReportObserver"),
+        # git_security_audit extracted to standalone K8s CronJob on arx3
+        # ("observers.git_security_audit", "GitSecurityAuditObserver"),
+        # git_auto_sync extracted to standalone K8s CronJob on arx3
+        # ("observers.git_auto_sync", "GitAutoSyncObserver"),
+        # github_activity extracted to standalone K8s CronJob on arx3
+        # ("observers.github_activity", "GitHubActivityObserver"),
         ("observers.pipeline_watchdog", "PipelineWatchdog"),
     ]
 
