@@ -1,0 +1,34 @@
+{
+  "date": "2026-03-19",
+  "generated": "2026-03-19T16:00:03.473639+00:00",
+  "observers": {
+    "alertmanager_seen": {
+      "last_run": null,
+      "total_runs": "?"
+    },
+    "cyber_threat_feed": {
+      "last_run": "2026-03-14 19:00 UTC",
+      "total_runs": "?"
+    },
+    "email_seen": {
+      "error": "unreadable"
+    },
+    "health_2026-03-18": {
+      "last_run": null,
+      "total_runs": "?"
+    },
+    "intel_briefing_published": {
+      "last_run": null,
+      "total_runs": "?"
+    },
+    "intel_deep_analysis_state": {
+      "last_run": "2026-03-14T12:20:58.197742+00:00",
+      "total_runs": "?"
+    },
+    "last_escalation": {
+      "last_run": null,
+      "total_runs": "?"
+    }
+  },
+  "total_tracked": 7
+}
