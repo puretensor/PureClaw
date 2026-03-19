@@ -1448,10 +1448,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
             await maybe_generate_summary(chat_id)
 
-            # Finalize streaming message (applies Markdown formatting)
-            if editor.text:
-                await editor.finalize()
-            else:
+            # Finalize streaming editor (cleans up progress messages + applies Markdown)
+            sent = await editor.finalize()
+            if not sent:
+                # Backend didn't stream text (e.g. vLLM) — send result as new messages
                 for chunk in split_message(result_text):
                     try:
                         await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
@@ -1649,9 +1649,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await maybe_generate_summary(chat_id)
 
-            if editor.text:
-                await editor.finalize()
-            else:
+            sent = await editor.finalize()
+            if not sent:
                 for chunk in split_message(result_text):
                     try:
                         await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
