@@ -116,7 +116,7 @@ def _migrate_from_json():
         if not memories:
             return
 
-        lines = ["# HAL Memory", ""]
+        lines = [f"# {AGENT_NAME} Memory", ""]
         for mem in memories.values():
             text = mem.get("text", "")
             cat = mem.get("category", "general")
@@ -170,7 +170,7 @@ def save_memory(text: str, topic: str | None = None) -> str:
     else:
         existing = _read_md(MEMORY_MD)
         if not existing:
-            content = f"# HAL Memory\n\n- {text}\n"
+            content = f"# {AGENT_NAME} Memory\n\n- {text}\n"
         else:
             content = existing.rstrip("\n") + f"\n- {text}\n"
 
@@ -374,7 +374,7 @@ def add_memory(text: str, category: str = "general") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Shared context (PureClaw ↔ HAL sync)
+# Shared context (PureClaw instance sync)
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -474,7 +474,7 @@ def save_heartbeat(content: str) -> None:
 
 
 def get_shared_context() -> str:
-    """Read the synced PureClaw MEMORY.md for injection into HAL's prompt."""
+    """Read the synced PureClaw MEMORY.md for injection into the agent's prompt."""
     if not SHARED_CONTEXT_PATH.exists():
         return ""
     try:

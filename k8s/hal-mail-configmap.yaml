@@ -35,7 +35,7 @@ data:
   DRY_RUN: "true"
 
   # Agent identity — personality is per-profile, not global
-  AGENT_NAME: "HAL"
+  AGENT_NAME: "PureClaw"
 
   # Claude fallback config
   CLAUDE_CWD: "/app"

@@ -3,7 +3,7 @@
 
 Runs every 10 minutes via the Observer registry:
   Pull: Reads PureClaw's MEMORY.md from tensor-core via SSH, stores locally at /data/sync/
-  Push: Composes a digest of HAL's recent sessions/memories, writes to tensor-core
+  Push: Composes a digest of the agent's recent sessions/memories, writes to tensor-core
 
 SSH is one-way (pod → TC only), so this observer drives both directions.
 Note: Pulled TC memory goes to SHARED_CONTEXT_PATH (read-only reference),
@@ -65,7 +65,7 @@ def _content_hash(text: str) -> str:
 
 
 class MemorySyncObserver(Observer):
-    """Bidirectional memory sync between PureClaw (tensor-core) and HAL (K3s)."""
+    """Bidirectional memory sync between PureClaw (tensor-core) and NEXUS (K3s)."""
 
     name = "memory_sync"
     schedule = "*/10 * * * *"  # Every 10 minutes
@@ -133,7 +133,7 @@ class MemorySyncObserver(Observer):
         return True
 
     def _push_hal_digest(self, state: dict) -> bool:
-        """Compose HAL's activity digest and push to tensor-core."""
+        """Compose agent's activity digest and push to tensor-core."""
         from config import AUTHORIZED_USER_ID
         from db import list_sessions
         from memory import get_memories_for_injection, list_topic_files
@@ -142,8 +142,9 @@ class MemorySyncObserver(Observer):
         now_str = now.strftime("%Y-%m-%d %H:%M UTC")
 
         # Build digest content
+        from config import AGENT_NAME
         lines = [
-            "# Recent HAL Activity (auto-synced)",
+            f"# Recent {AGENT_NAME} Activity (auto-synced)",
             f"_Last updated: {now_str}_",
             "",
         ]
@@ -170,11 +171,11 @@ class MemorySyncObserver(Observer):
         except Exception as exc:
             log.warning("[memory_sync] Push: failed to query sessions: %s", exc)
 
-        # HAL memories (from MEMORY.md)
+        # Agent memories (from MEMORY.md)
         try:
             mem_content = get_memories_for_injection()
             if mem_content:
-                lines.append("## HAL Memories")
+                lines.append(f"## {AGENT_NAME} Memories")
                 # Strip the injection header, include raw MEMORY.md content
                 for line in mem_content.splitlines():
                     if line.startswith("[") and "Memory]" in line:
@@ -185,7 +186,7 @@ class MemorySyncObserver(Observer):
             # List topic files
             topics = list_topic_files()
             if topics:
-                lines.append("## HAL Topic Files")
+                lines.append(f"## {AGENT_NAME} Topic Files")
                 for t in topics:
                     size_kb = t["size"] / 1024
                     lines.append(f"- {t['name']}.md ({size_kb:.1f} KB)")
@@ -210,7 +211,7 @@ class MemorySyncObserver(Observer):
 
         state["push_hash"] = new_hash
         state["push_time"] = now.isoformat()
-        log.info("[memory_sync] Push: updated HAL digest on tensor-core (%d bytes)", len(digest))
+        log.info("[memory_sync] Push: updated agent digest on tensor-core (%d bytes)", len(digest))
         return True
 
 

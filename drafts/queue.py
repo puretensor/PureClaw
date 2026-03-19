@@ -7,6 +7,7 @@ Drafts are stored in SQLite (db.py). Sending uses gmail.py CLI.
 """
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from db import (
 log = logging.getLogger("nexus")
 
 GMAIL_SCRIPT = Path.home() / ".config" / "puretensor" / "gmail.py"
-GMAIL_IDENTITY = "hal"  # sends as hal@example.com (mail provider SMTP)
+GMAIL_IDENTITY = os.environ.get("GMAIL_IDENTITY", "default")  # gmail.py account name
 
 
 async def create_email_draft(

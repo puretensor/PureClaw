@@ -1,4 +1,4 @@
-"""Voice TTS — convert Claude responses to voice notes using local HAL 9000 voice clone."""
+"""Voice TTS — convert AI responses to voice notes using local TTS."""
 
 import asyncio
 import logging
@@ -59,7 +59,7 @@ def _clean_for_tts(text: str) -> str:
 
 
 async def text_to_voice_note(text: str) -> bytes | None:
-    """Convert text to OGG voice note bytes using HAL 9000 TTS.
+    """Convert text to OGG voice note bytes using local TTS.
 
     Returns OGG bytes or None on failure. Skips gracefully when TC is offline.
     """
@@ -80,7 +80,7 @@ async def text_to_voice_note(text: str) -> bytes | None:
     wav_path = None
     ogg_path = None
     try:
-        # Request WAV from local HAL voice TTS daemon
+        # Request WAV from local voice TTS daemon
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 TTS_API_URL,

@@ -13,8 +13,10 @@ import logging
 
 log = logging.getLogger("nexus")
 
-# All known HAL addresses (self-ignore — prevents reply loops)
-HAL_ADDRESSES = {"hal@example.com", "hal@example.com", "hal@example.com"}
+# Agent's own email addresses (self-ignore — prevents reply loops)
+# Set AGENT_EMAIL env var to a comma-separated list of addresses
+_AGENT_EMAIL_RAW = os.environ.get("AGENT_EMAIL", "")
+AGENT_ADDRESSES = {a.strip().lower() for a in _AGENT_EMAIL_RAW.split(",") if a.strip()}
 
 # Senders to always ignore (case-insensitive substring match)
 IGNORE_SENDERS = [
@@ -90,7 +92,7 @@ def classify_email(from_addr: str, subject: str, to_addr: str = "",
     subject_lower = subject.lower()
 
     # Never reply to ourselves (prevents self-reply loops)
-    for hal_addr in HAL_ADDRESSES:
+    for hal_addr in AGENT_ADDRESSES:
         if hal_addr in from_lower:
             return "ignore"
 

@@ -53,7 +53,7 @@ data:
   SEARXNG_URL: "http://YOUR_SEARXNG_HOST:8080/search"
 
   # Agent identity
-  AGENT_NAME: "HAL"
+  AGENT_NAME: "PureClaw"
   AGENT_PERSONALITY: >-
     Calm, measured, precise. Direct but professional. You state facts with quiet
     certainty and dry understatement. Supremely competent — you simply perform.

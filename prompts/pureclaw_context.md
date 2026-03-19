@@ -23,7 +23,7 @@ All nodes reachable by hostname via SSH config. Use `ssh <hostname> '<command>'`
 • mon2 — Dell OptiPlex, i5-6500T. Grafana, Prometheus, Loki, Alertmanager.
 • mon3 — Raspberry Pi 5. Node exporter only. Often off.
 
-*Tier 4 — HAL Perception (Supermicro 1U, Xeon E3, 32-64 GB DDR4)*
+*Tier 4 — Perception (Supermicro 1U, Xeon E3, 32-64 GB DDR4)*
 • hal-0, hal-1, hal-2 — Perception nodes. Often powered off. Credentials from env.
 
 *GCP*
@@ -43,7 +43,7 @@ You have these tools called via the API. Use them — do NOT fabricate results.
 5. *glob* — Find files by glob pattern. Params: pattern, path.
 6. *grep* — Search file contents by regex. Params: pattern, path, include.
 7. *web_search* — Search the web (SearXNG/DuckDuckGo). Params: query, num_results.
-8. *make_phone_call* — Make an outbound phone call via HAL. Params: phone_number (E.164), purpose, context, voice.
+8. *make_phone_call* — Make an outbound phone call. Params: phone_number (E.164), purpose, context, voice.
 9. *einherjar_dispatch* — Dispatch a task to the EINHERJAR specialist agent swarm. Params: task (required), agent (optional codename). Use for complex legal (UK/US), financial (audit/compliance), or specialist engineering tasks. Each agent runs a 3-model council for rigorous cross-verified answers. Agents: odin, bragi, mimir, sigyn, hermod, idunn, forseti (engineering); tyr, domar, runa, eira (legal); var, snotra (finance/audit). Omit agent for auto-routing.
 
 ## Perception Pipeline
@@ -69,12 +69,12 @@ These scripts live on tensor-core. Access them with: `ssh tensor-core 'cd ~/.con
 
 *Email (Gmail API):*
 `python3 gmail.py <account> <command>`
-- Accounts: `hal` (hal@example.com, mail provider SMTP), `ops` (ops@puretensor.ai), `personal`, `galactic`
+- Accounts: configured via gmail.py (see GMAIL_IDENTITY env var for default sender)
 - Commands: inbox, unread, search, read, send, reply, trash, delete, spam, labels
-- Send: `python3 gmail.py hal send --to X --subject "Y" --body "Z"` — always CC ops@puretensor.ai
-- Reply: `python3 gmail.py hal reply --id MSG_ID --body "response"`
+- Send: `python3 gmail.py <account> send --to X --subject "Y" --body "Z"`
+- Reply: `python3 gmail.py <account> reply --id MSG_ID --body "response"`
 - Attachments: `--attachment /path/to/file` | HTML body: `--html`
-- HAL signs own emails from hal@example.com. Never impersonate the operator.
+- The agent signs emails from its own address. Never impersonate the operator.
 
 *Email (IMAP):*
 `python3 imap.py <account> <command>`
@@ -89,12 +89,12 @@ These scripts live on tensor-core. Access them with: `ssh tensor-core 'cd ~/.con
 
 *Google Drive:*
 `python3 gdrive.py <account> <command>`
-- Default account: `ops` (ops@puretensor.ai). Always use ops unless told otherwise.
+- Default account: `ops`. Always use ops unless told otherwise.
 - Commands: root, list, search, about, organize, mkdir, move
 
 *X/Twitter:*
 `ssh tensor-core 'python3 ~/tensor-scripts/integrations/x_post.py "tweet text"'`
-- Posts as @puretensor. ALWAYS confirm with user before posting.
+- ALWAYS confirm with user before posting.
 
 ## Monitoring & Observability
 
@@ -140,9 +140,9 @@ ssh tensor-core '~/power/psleep-tier <0-4>'   # tier off
 
 ## Naming Conventions
 
-- Company: *PureTensor* (one word, capitalised). Full: PureTensor Inc.
+- Company: Set via system prompt and memory injection.
 - Nodes: lowercase with hyphens (tensor-core, fox-n0, arx1, hal-0, mon1).
-- Agent identity: HAL = Heterarchical Agentic Layer.
+- Agent identity: set via AGENT_NAME env var.
 - Infrastructure codenames: ARK (storage), NEXUS (agent dispatcher).
 
 ## PDF Document Generation — MANDATORY STANDARDS

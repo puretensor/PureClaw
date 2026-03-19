@@ -11,7 +11,7 @@ Lifecycle:
 
 Defense-in-depth: an email must pass ALL of these gates to trigger an auto-reply:
   1. Account role = primary
-  2. Not from HAL's own addresses
+  2. Not from agent's own addresses
   3. Not a [BRETALON] workflow email
   4. Message-ID not in email_seen
   5. Content hash not in email_seen
@@ -33,6 +33,7 @@ import html
 import imaplib
 import json
 import logging
+import os
 import re
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -63,8 +64,10 @@ MAX_EMAIL_AGE_HOURS = 24
 # Rate limit: max auto-replies per sender per hour
 MAX_REPLIES_PER_SENDER_PER_HOUR = 3
 
-# All known HAL addresses (self-ignore)
-HAL_ADDRESSES = {"hal@example.com", "hal@example.com", "hal@example.com"}
+# Agent's own email addresses (self-ignore — prevents reply loops)
+# Set AGENT_EMAIL env var to a comma-separated list of addresses
+_AGENT_EMAIL_RAW = os.environ.get("AGENT_EMAIL", "")
+AGENT_ADDRESSES = {a.strip().lower() for a in _AGENT_EMAIL_RAW.split(",") if a.strip()}
 
 # Exact terminal phrases that don't warrant a reply.
 # Only suppresses when the entire message body (after signature stripping) matches.
@@ -100,8 +103,8 @@ EMAIL_SYSTEM_PROMPT_TEMPLATE = (
     "- Reply naturally and conversationally. Be warm, concise, helpful.\n"
     "- Plain text only (no markdown, no HTML).\n"
     "- Keep replies appropriately sized — short for simple things, detailed for complex requests.\n"
-    "- Sign off as HAL.\n"
-    "- You are HAL, not Claude. Never mention being an AI or language model.\n"
+    "- Sign off as {agent_name}.\n"
+    "- You are {agent_name}, not Claude. Never mention being an AI or language model.\n"
     "- This session has history — you remember previous emails with this sender."
 )
 
@@ -353,8 +356,8 @@ class EmailInputChannel(Channel):
         """Process a single email through all safety gates."""
         sender_addr = (em.get("from_addr") or em["from"]).lower().strip()
 
-        # --- Gate 1: Self-ignore (all known HAL addresses) ---
-        if sender_addr in HAL_ADDRESSES:
+        # --- Gate 1: Self-ignore (agent's own email addresses) ---
+        if sender_addr in AGENT_ADDRESSES:
             return
 
         # --- Gate 2: Bretalon workflow routing ---

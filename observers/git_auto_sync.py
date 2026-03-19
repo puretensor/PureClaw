@@ -303,7 +303,9 @@ class GitAutoSyncObserver(Observer):
         # 5. Commit
         # Use heredoc-style to avoid shell escaping issues
         escaped_msg = commit_msg.replace('"', '\\"').replace("'", "'\\''")
-        co_author = "Co-Authored-By: HAL <hal@example.com>"
+        agent_name = os.environ.get("AGENT_NAME", "PureClaw")
+        agent_email = os.environ.get("AGENT_EMAIL", "bot@localhost")
+        co_author = f"Co-Authored-By: {agent_name} <{agent_email}>"
         rc, output = self._ssh_cmd(
             f"cd ~/{repo_path} && git commit -m '{escaped_msg}' -m '{co_author}' 2>&1",
             timeout=30,
