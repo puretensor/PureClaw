@@ -313,6 +313,21 @@ async def cmd_ollama(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized
+async def cmd_bedrock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Switch to AWS Bedrock Sonnet 4.6 (API)."""
+    chat_id = update.effective_chat.id
+    import config
+    from backends import reset_backend
+    from db import reset_session_id
+    if config.ENGINE_BACKEND != "bedrock_api":
+        config.ENGINE_BACKEND = "bedrock_api"
+        reset_backend()
+        reset_session_id(chat_id)
+    update_model(chat_id, "sonnet")
+    await update.message.reply_text("Switched to Bedrock Sonnet 4.6 (AWS API, with tools).")
+
+
+@authorized
 async def cmd_nemotron(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Switch to NVIDIA Nemotron Super (local vLLM)."""
     chat_id = update.effective_chat.id
@@ -359,6 +374,10 @@ async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
         ],
         [
+            InlineKeyboardButton(
+                label("Bedrock Sonnet", current == "bedrock_api"),
+                callback_data="backend:bedrock_api:sonnet",
+            ),
             InlineKeyboardButton(
                 label("Ollama (local)", current == "ollama"),
                 callback_data="backend:ollama:sonnet",
@@ -442,6 +461,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/nemotron — NVIDIA Nemotron Super (local)\n"
         "/opus — Switch to Claude Opus 4.6\n"
         "/sonnet — Switch to Claude Sonnet 4.6\n"
+        "/bedrock — Bedrock Sonnet 4.6 (AWS API)\n"
         "/backend — Choose engine (keyboard)\n"
         "/voice [on|off] — Toggle voice responses\n\n"
         "<b>Memory</b>\n"
