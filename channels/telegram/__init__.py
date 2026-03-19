@@ -21,8 +21,8 @@ class TelegramChannel(Channel):
             filters,
         )
         from channels.telegram.commands import (
-            cmd_new, cmd_opus, cmd_sonnet, cmd_ollama, cmd_nemotron, cmd_backend,
-            cmd_voice, cmd_status, cmd_help, cmd_start, cmd_profile, cmd_journal,
+            cmd_new, cmd_opus, cmd_sonnet, cmd_ollama, cmd_nemotron, cmd_bedrock,
+            cmd_backend, cmd_voice, cmd_status, cmd_help, cmd_start, cmd_profile, cmd_journal,
             cmd_weather_card, cmd_trains_card, cmd_central, cmd_riverside,
             cmd_markets_card, cmd_nodes_card,
             cmd_session, cmd_history, cmd_resume,
@@ -53,6 +53,7 @@ class TelegramChannel(Channel):
         self.app.add_handler(CommandHandler("sonnet", cmd_sonnet))
         self.app.add_handler(CommandHandler("ollama", cmd_ollama))
         self.app.add_handler(CommandHandler("nemotron", cmd_nemotron))
+        self.app.add_handler(CommandHandler("bedrock", cmd_bedrock))
         self.app.add_handler(CommandHandler("backend", cmd_backend))
         self.app.add_handler(CommandHandler("voice", cmd_voice))
         self.app.add_handler(CommandHandler("status", cmd_status))
