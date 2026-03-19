@@ -38,7 +38,7 @@ from channels.email_in import (
     _is_terminal,
     _email_chat_id,
     EMAIL_SYSTEM_PROMPT_TEMPLATE,
-    HAL_ADDRESSES,
+    AGENT_ADDRESSES,
     ACCOUNTS_FILE,
     MAX_EMAIL_AGE_HOURS,
     MAX_REPLIES_PER_SENDER_PER_HOUR,
@@ -166,8 +166,8 @@ class HalMailRunner:
         """Process a single email through all safety gates."""
         sender_addr = (em.get("from_addr") or em["from"]).lower().strip()
 
-        # --- Gate 1: Self-ignore (all known HAL addresses) ---
-        if sender_addr in HAL_ADDRESSES:
+        # --- Gate 1: Self-ignore (agent's own email addresses) ---
+        if sender_addr in AGENT_ADDRESSES:
             return
 
         # --- Gate 2: Bretalon workflow routing ---

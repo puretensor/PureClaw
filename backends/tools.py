@@ -272,9 +272,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "make_phone_call",
             "description": (
-                "Make an outbound phone call via HAL. Use for booking/cancelling "
+                "Make an outbound phone call. Use for booking/cancelling "
                 "appointments, calling businesses for information, or routine phone "
-                "tasks. HAL introduces himself as the operator's personal assistant. "
+                "tasks. The agent introduces itself as the operator's personal assistant. "
                 "Returns the call transcript and outcome when the call completes."
             ),
             "parameters": {
@@ -882,7 +882,7 @@ def _exec_einherjar_dispatch(args: dict, **_kwargs) -> tuple[str, list[str]]:
 
 
 def _exec_make_phone_call(args: dict, **_kwargs) -> tuple[str, list[str]]:
-    """Make an outbound phone call via HAL Phone service on fox-n0."""
+    """Make an outbound phone call via the phone service."""
     phone_number = args.get("phone_number", "").strip()
     purpose = args.get("purpose", "inquiry")
     context = args.get("context", "")
@@ -915,7 +915,7 @@ def _exec_make_phone_call(args: dict, **_kwargs) -> tuple[str, list[str]]:
         with urllib.request.urlopen(req, timeout=330) as resp:
             result = json.loads(resp.read().decode())
     except urllib.error.URLError as e:
-        return f"Error: HAL Phone service unreachable: {e}", []
+        return f"Error: Phone service unreachable: {e}", []
     except Exception as e:
         return f"Error making phone call: {e}", []
 

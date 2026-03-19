@@ -1176,7 +1176,7 @@ def mark_email_content_seen(chash: str, message_id: str, account_name: str) -> N
 
 
 def has_reply_been_sent(chash: str) -> bool:
-    """Check if HAL has already replied to this content."""
+    """Check if the agent has already replied to this content."""
     con = _connect()
     row = con.execute(
         "SELECT 1 FROM email_replies_sent WHERE content_hash = ?",
@@ -1188,7 +1188,7 @@ def has_reply_been_sent(chash: str) -> bool:
 
 def record_reply_sent(sender_addr: str, subject: str, chash: str,
                       reply_preview: str) -> None:
-    """Record that HAL sent a reply (audit trail + dedup)."""
+    """Record that the agent sent a reply (audit trail + dedup)."""
     con = _connect()
     con.execute(
         """INSERT OR IGNORE INTO email_replies_sent

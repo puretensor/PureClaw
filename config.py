@@ -102,7 +102,8 @@ WA_ROUTING_CONFIG = os.environ.get("WA_ROUTING_CONFIG", "")
 WA_CHAT_ID_OFFSET = 800_000_000_000
 
 # Agent identity — configurable name and personality
-AGENT_NAME = os.environ.get("AGENT_NAME", "HAL")
+AGENT_NAME = os.environ.get("AGENT_NAME", "PureClaw")
+AGENT_EMAIL = os.environ.get("AGENT_EMAIL", "")  # agent's own email (self-ignore in email channel)
 AGENT_PERSONALITY = os.environ.get("AGENT_PERSONALITY", "")
 
 # Dispatcher

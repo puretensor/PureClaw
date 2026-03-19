@@ -137,9 +137,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        "I'm _HAL_ \u2014 the Heterarchical Agentic Layer. "
-        "PureTensor's sovereign infrastructure agent.\n\n"
-        "I manage a fleet of compute nodes, handle email, monitor services, "
+        f"I'm _{AGENT_NAME}_ \u2014 your agentic AI assistant.\n\n"
+        "I can manage infrastructure, handle email, monitor services, "
         "process intelligence feeds, and assist with engineering tasks.\n\n"
         "Before we begin \u2014 what should I call you?",
         parse_mode=ParseMode.MARKDOWN,

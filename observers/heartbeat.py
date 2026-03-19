@@ -19,8 +19,10 @@ class HeartbeatObserver(Observer):
         if not checklist.strip():
             return ObserverResult(success=True)  # Silent — no cost
 
+        from config import AGENT_NAME
+
         prompt = (
-            "You are HAL, PureTensor's infrastructure agent. "
+            f"You are {AGENT_NAME}, an infrastructure agent. "
             "The following is your heartbeat checklist — items to check right now. "
             "For each item, use tools to check the actual status, then report findings. "
             "Be concise. Only report actionable items.\n\n"

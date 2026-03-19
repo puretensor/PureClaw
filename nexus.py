@@ -41,7 +41,7 @@ def _build_observer_registry():
         ("observers.git_push", "GitPushObserver"),
         ("observers.darwin_consumer", "DarwinConsumer"),
         ("observers.followup_reminder", "FollowupReminderObserver"),
-        # alertmanager_monitor disabled — alerts suppressed from HAL interface
+        # alertmanager_monitor disabled — alerts suppressed from agent interface
         # ("observers.alertmanager_monitor", "AlertmanagerMonitorObserver"),
         # cyber_threat_feed extracted to standalone K8s CronJob on arx4
         # ("observers.cyber_threat_feed", "CyberThreatFeedObserver"),
