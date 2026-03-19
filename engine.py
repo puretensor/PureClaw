@@ -189,8 +189,42 @@ async def _read_stream(proc, on_progress=None, streaming_editor=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Public API — delegates to configured backend
+# Public API — delegates to configured backend with automatic failover
 # ---------------------------------------------------------------------------
+
+_failover_backend = None
+
+
+def _get_failover_backend():
+    """Lazy-init the failover backend (Bedrock Sonnet 4.6)."""
+    global _failover_backend
+    if _failover_backend is not None:
+        return _failover_backend
+
+    from config import FAILOVER_ENABLED, FAILOVER_BACKEND
+    if not FAILOVER_ENABLED:
+        return None
+
+    try:
+        import importlib
+        _FAILOVER_REGISTRY = {
+            "bedrock_api": ("backends.bedrock_api", "BedrockAPIBackend"),
+            "anthropic_api": ("backends.anthropic_api", "AnthropicAPIBackend"),
+            "gemini_api": ("backends.gemini_api", "GeminiAPIBackend"),
+        }
+        if FAILOVER_BACKEND not in _FAILOVER_REGISTRY:
+            log.warning("Unknown FAILOVER_BACKEND: %s", FAILOVER_BACKEND)
+            return None
+        module_path, class_name = _FAILOVER_REGISTRY[FAILOVER_BACKEND]
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, class_name)
+        _failover_backend = cls()
+        log.info("Failover backend initialized: %s", _failover_backend.name)
+    except Exception as e:
+        log.warning("Failed to initialize failover backend: %s", e)
+        return None
+
+    return _failover_backend
 
 
 def get_model_display(model: str = CLAUDE_MODEL) -> str:
@@ -215,19 +249,53 @@ def call_sync(
     """Synchronous LLM call (for observers running in thread pool).
 
     Returns dict with 'result', 'session_id' keys.
+    Automatically fails over to Bedrock if primary backend errors.
     """
     import time as _time
     from backends import get_backend
 
     backend = get_backend()
     t0 = _time.monotonic()
-    result = backend.call_sync(
-        prompt,
-        model=model,
-        session_id=session_id,
-        timeout=timeout,
-        system_prompt=SYSTEM_PROMPT,
-    )
+
+    try:
+        result = backend.call_sync(
+            prompt,
+            model=model,
+            session_id=session_id,
+            timeout=timeout,
+            system_prompt=SYSTEM_PROMPT,
+        )
+        # Check for error results from backends that return errors as dicts
+        if result.get("error"):
+            raise RuntimeError(result.get("result", "Backend returned error"))
+    except Exception as primary_err:
+        log.error("Primary backend (%s) failed: %s", backend.name, primary_err)
+        failover = _get_failover_backend()
+        if failover and failover.name != backend.name:
+            log.info("Failing over to %s (sonnet)", failover.name)
+            try:
+                result = failover.call_sync(
+                    prompt,
+                    model="sonnet",
+                    session_id=None,  # Fresh session on failover
+                    timeout=timeout,
+                    system_prompt=SYSTEM_PROMPT,
+                )
+                result["_failover"] = True
+                result["_failover_backend"] = failover.name
+                duration = int((_time.monotonic() - t0) * 1000)
+                try:
+                    from security.audit import log_llm_call
+                    log_llm_call(None, None, failover.name, "sonnet", None, duration)
+                except Exception:
+                    pass
+                return result
+            except Exception as failover_err:
+                log.error("Failover backend (%s) also failed: %s", failover.name, failover_err)
+                return {"result": f"Primary ({backend.name}) and failover ({failover.name}) both failed.", "session_id": session_id}
+        else:
+            return {"result": f"Error: {primary_err}", "session_id": session_id}
+
     duration = int((_time.monotonic() - t0) * 1000)
 
     try:
@@ -239,34 +307,8 @@ def call_sync(
     return result
 
 
-async def call_streaming(
-    message: str,
-    session_id: str | None,
-    model: str,
-    on_progress=None,
-    streaming_editor=None,
-    extra_system_prompt: str | None = None,
-    chat_id: int | None = None,
-) -> dict:
-    """Async streaming LLM call with real-time progress.
-
-    Returns dict with 'result', 'session_id', 'written_files' keys.
-    """
-    import time as _time
-    from backends import get_backend
-
-    # Inference guard: model allowlist check
-    try:
-        from security.inference import get_inference_guard
-        guard = get_inference_guard()
-        allowed, reason = guard.check_model(model)
-        if not allowed:
-            log.warning("Inference guard blocked model '%s': %s", model, reason)
-            return {"result": f"Error: {reason}", "session_id": session_id, "written_files": []}
-    except Exception:
-        pass
-
-    memory_ctx = None
+def _build_memory_context(chat_id: int | None = None) -> str | None:
+    """Assemble memory context for injection (shared by streaming + failover)."""
     parts = []
     if get_memories_for_injection:
         mem = get_memories_for_injection()
@@ -282,7 +324,7 @@ async def call_streaming(
             from db import get_user_profile
             profile = get_user_profile(chat_id)
             if profile and profile.get("display_name"):
-                profile_lines = [f"[User Profile]"]
+                profile_lines = ["[User Profile]"]
                 profile_lines.append(f"Name: {profile['display_name']}")
                 if profile.get("timezone") and profile["timezone"] != "UTC":
                     profile_lines.append(f"Timezone: {profile['timezone']}")
@@ -290,8 +332,7 @@ async def call_streaming(
         except Exception:
             pass
 
-    if parts:
-        memory_ctx = "\n\n".join(parts)
+    memory_ctx = "\n\n".join(parts) if parts else None
 
     # Redact memory context before injection
     try:
@@ -301,18 +342,98 @@ async def call_streaming(
     except Exception:
         pass
 
+    return memory_ctx
+
+
+async def call_streaming(
+    message: str,
+    session_id: str | None,
+    model: str,
+    on_progress=None,
+    streaming_editor=None,
+    extra_system_prompt: str | None = None,
+    chat_id: int | None = None,
+) -> dict:
+    """Async streaming LLM call with real-time progress.
+
+    Returns dict with 'result', 'session_id', 'written_files' keys.
+    Automatically fails over to Bedrock Sonnet if primary backend errors.
+    """
+    import time as _time
+    from backends import get_backend
+
+    # Inference guard: model allowlist check
+    try:
+        from security.inference import get_inference_guard
+        guard = get_inference_guard()
+        allowed, reason = guard.check_model(model)
+        if not allowed:
+            log.warning("Inference guard blocked model '%s': %s", model, reason)
+            return {"result": f"Error: {reason}", "session_id": session_id, "written_files": []}
+    except Exception:
+        pass
+
+    memory_ctx = _build_memory_context(chat_id)
+
     backend = get_backend()
     t0 = _time.monotonic()
-    result = await backend.call_streaming(
-        message,
-        session_id=session_id,
-        model=model,
-        on_progress=on_progress,
-        streaming_editor=streaming_editor,
-        system_prompt=SYSTEM_PROMPT,
-        memory_context=memory_ctx,
-        extra_system_prompt=extra_system_prompt,
-    )
+
+    try:
+        result = await backend.call_streaming(
+            message,
+            session_id=session_id,
+            model=model,
+            on_progress=on_progress,
+            streaming_editor=streaming_editor,
+            system_prompt=SYSTEM_PROMPT,
+            memory_context=memory_ctx,
+            extra_system_prompt=extra_system_prompt,
+        )
+    except Exception as primary_err:
+        log.error("Primary backend (%s) streaming failed: %s", backend.name, primary_err)
+        failover = _get_failover_backend()
+        if failover and failover.name != backend.name:
+            log.info("Failing over to %s (sonnet) for streaming", failover.name)
+
+            # Notify user of failover via streaming editor
+            if streaming_editor:
+                try:
+                    await streaming_editor.add_tool_status(
+                        f"Primary backend failed. Switching to Bedrock Sonnet..."
+                    )
+                except Exception:
+                    pass
+
+            try:
+                result = await failover.call_streaming(
+                    message,
+                    session_id=None,  # Fresh session on failover
+                    model="sonnet",
+                    on_progress=on_progress,
+                    streaming_editor=streaming_editor,
+                    system_prompt=SYSTEM_PROMPT,
+                    memory_context=memory_ctx,
+                    extra_system_prompt=extra_system_prompt,
+                )
+                result["_failover"] = True
+                result["_failover_backend"] = failover.name
+                duration = int((_time.monotonic() - t0) * 1000)
+                try:
+                    from security.audit import log_llm_call
+                    log_llm_call(None, None, failover.name, "sonnet", None, duration)
+                except Exception:
+                    pass
+                return result
+            except Exception as failover_err:
+                log.error("Failover backend (%s) also failed: %s", failover.name, failover_err)
+                return {
+                    "result": f"Primary ({backend.name}) and failover ({failover.name}) both failed.",
+                    "session_id": session_id,
+                    "written_files": [],
+                }
+        else:
+            return {"result": f"Error: {primary_err}", "session_id": session_id, "written_files": []}
+
     duration = int((_time.monotonic() - t0) * 1000)
 
     try:

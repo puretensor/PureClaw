@@ -33,9 +33,13 @@ ANTHROPIC_TOOL_MAX_ITER = int(os.environ.get("ANTHROPIC_TOOL_MAX_ITER", "25"))
 ANTHROPIC_TOOL_TIMEOUT = int(os.environ.get("ANTHROPIC_TOOL_TIMEOUT", "120"))
 ANTHROPIC_TOTAL_TIMEOUT = int(os.environ.get("ANTHROPIC_TOTAL_TIMEOUT", "600"))
 
-# AWS Bedrock (legacy — kept for fallback)
+# AWS Bedrock (failover backend)
 BEDROCK_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 BEDROCK_MODEL = os.environ.get("BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-6")
+
+# Automatic failover — retry on Bedrock Sonnet when primary backend fails
+FAILOVER_ENABLED = os.environ.get("FAILOVER_ENABLED", "true").lower() in ("true", "1", "yes")
+FAILOVER_BACKEND = os.environ.get("FAILOVER_BACKEND", "bedrock_api")
 BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "64000"))
 BEDROCK_THINKING_BUDGET = int(os.environ.get("BEDROCK_THINKING_BUDGET", "0"))
 
