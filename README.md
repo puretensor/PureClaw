@@ -4,7 +4,7 @@
 
 PureClaw is a security-hardened agentic AI system built around [NVIDIA Nemotron Super](https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1), served locally via [vLLM](https://github.com/vllm-project/vllm) on NVIDIA RTX PRO 6000 Blackwell GPUs. 8 swappable LLM backends, 19 tools, declarative YAML security policies, full audit logging, credential redaction, SSRF protection, and policy hot-reload without restart. One agent, zero cloud dependency.
 
-PureClaw connects through Telegram, Discord, WhatsApp, and email. It runs 16 autonomous background observers for continuous operational intelligence. Cloud backends (Anthropic, OpenAI, Google) are available as fallbacks when local GPU inference isn't needed.
+PureClaw connects through Telegram, Discord, WhatsApp, and email. It runs 17 autonomous background observers for continuous operational intelligence, with automatic failover to AWS Bedrock when the primary backend fails. Cloud backends (Anthropic, OpenAI, Google) are available as fallbacks when local GPU inference isn't needed.
 
 [pureclaw.ai](https://pureclaw.ai) | [GitHub](https://github.com/puretensor/PureClaw)
 
@@ -29,13 +29,13 @@ PureClaw is designed as an agentic scaffolding layer around Nemotron Super — t
 
 You message your bot. PureClaw routes your message to NVIDIA Nemotron Super (or whichever engine is active), streams the response back in real time, and gives the model access to 19 built-in tools — shell commands, file operations, web search, phone calls, specialist agents, subagent parallelism, task tracking, and persistent memory.
 
-Beyond conversation, PureClaw runs 16 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits), handles email with auto-reply for VIP senders and approve/reject drafts for everyone else, schedules reminders, compresses long conversations automatically, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
+Beyond conversation, PureClaw runs 17 background observers (email monitoring, threat intelligence, content publishing, daily reports, git security audits, heartbeat checklists), handles email with auto-reply for VIP senders and approve/reject drafts for everyone else, schedules reminders, compresses long conversations automatically, profiles users through an onboarding flow, keeps a daily interaction journal, and serves instant data cards for weather, markets, and trains — all from Telegram or Discord.
 
 ---
 
 ## Engine Backends
 
-Eight engines. NVIDIA Nemotron Super is the default. Swap anytime with `/backend` or `/nemotron`.
+Eight engines. NVIDIA Nemotron Super is the default. Swap anytime with `/backend` or `/nemotron`. If the primary engine fails, PureClaw automatically fails over to AWS Bedrock Sonnet — no manual intervention needed.
 
 | Engine | Type | What It Is | Tools | Cost |
 |--------|------|-----------|-------|------|
@@ -336,6 +336,19 @@ The security policy is mounted as a ConfigMap at `/app/security/policy.yaml`. Up
 | `/sonnet` | Quick-switch to Claude Sonnet |
 | `/opus` | Quick-switch to Claude Opus |
 | `/ollama` | Quick-switch to local Ollama model |
+| `/bedrock` | Quick-switch to Claude Sonnet via AWS Bedrock |
+
+### User Profile & Onboarding
+
+| Command | What it does |
+|---------|-------------|
+| `/start` | First-run onboarding: sets your name, timezone, and shows capabilities |
+| `/profile` | View your current profile (name, timezone, preferences) |
+| `/profile set name <value>` | Set your display name |
+| `/profile set timezone <value>` | Set your timezone (e.g. `Europe/London`, `America/New_York`) |
+| `/profile set <key> <value>` | Store a custom preference |
+
+New users are guided through an onboarding flow on first `/start` that captures their name and timezone. Returning users see the help menu.
 
 ### Memory
 
@@ -349,6 +362,17 @@ PureClaw remembers things across sessions using markdown memory files. Memories 
 | `/memories` | List all memories and topic files |
 
 The AI engine also has three memory tools (`save_memory`, `read_memory`, `list_memory`) that let it read and write memories autonomously during conversation.
+
+### Daily Journal
+
+PureClaw keeps a daily journal of interactions at `/data/memory/journal/YYYY-MM-DD.md`. Journal entries are automatically injected into LLM context for short-term continuity across session resets.
+
+| Command | What it does |
+|---------|-------------|
+| `/journal` | Show today's journal entries |
+| `/journal yesterday` | Show yesterday's entries |
+| `/journal YYYY-MM-DD` | Show entries for a specific date |
+| `/journal purge` | Manually clean up old journal files (auto-purged after 30 days) |
 
 ### Scheduling
 
@@ -404,6 +428,18 @@ Instant structured responses that bypass the AI engine for speed. No tokens used
 
 ## Features
 
+### Automatic Failover
+
+If the primary LLM backend fails (network error, timeout, rate limit), PureClaw automatically retries on AWS Bedrock Sonnet. The failover backend is lazy-initialized on first failure and reused for subsequent calls. Users see a status notification when failover activates. Configurable via `FAILOVER_ENABLED` and `FAILOVER_BACKEND`.
+
+### User Profiles & Onboarding
+
+First-time users are guided through a conversational onboarding flow that captures their name and timezone. Profile data is stored in SQLite and injected into LLM context so the AI knows who it's talking to. Profiles persist across sessions and can be updated anytime with `/profile set`.
+
+### Group Chat Behavior
+
+When deployed in group chats (Telegram groups, WhatsApp groups), PureClaw defaults to silent. It only responds when directly addressed (@mentioned, replied to, or name invoked). One response per prompt, no consecutive messages, no unsolicited input.
+
 ### Streaming Responses
 
 Responses stream in real time — you see the text appear word by word in Telegram and Discord. Tool usage (file reads, shell commands, web searches) shows live status updates. NVIDIA Nemotron Super's streaming is served directly from local vLLM — no cloud API latency.
@@ -457,6 +493,10 @@ PureClaw uses a file-based memory system:
 - **Three LLM tools** — `save_memory`, `read_memory`, `list_memory` let the AI manage its own memory autonomously
 
 Memories persist to disk and survive restarts. The AI can save lessons, preferences, project context, and operational knowledge.
+
+### Daily Journal
+
+PureClaw maintains a daily interaction journal at `/data/memory/journal/`. Each message and voice note is logged with timestamps. The two most recent days are automatically injected into LLM context, giving the AI short-term continuity across session resets. Old journals are auto-purged after 30 days.
 
 ### Email Handling
 
@@ -514,6 +554,7 @@ Background tasks that run on cron schedules inside the PureClaw process. No exte
 | Git Security Audit | Every 2 hours | Scans repos for secrets, credentials, sensitive data |
 | Git Auto Sync | Every 4 hours | Keeps git repos synchronized across remotes |
 | Pipeline Watchdog | Every 6 hours | Monitors CI/CD and deployment pipelines |
+| Heartbeat | 8am, 12pm, 4pm, 8pm | Reads `/data/memory/HEARTBEAT.md` checklist; skips silently if empty (zero LLM cost) |
 | Git Push | Always on | Webhook listener for git push event summaries |
 | Darwin Consumer | Always on | Real-time UK rail data processing (Kafka) |
 
@@ -553,11 +594,11 @@ nexus.py (entry point)
   |     +-- WhatsApp           Multi-instance bridge (baileys sidecar)
   |     +-- Email Input        IMAP polling, classification, draft generation
   |
-  +-- Observers (16)           Background tasks on cron schedules + persistent threads
+  +-- Observers (17)           Background tasks on cron schedules + persistent threads
   +-- Dispatcher               Instant data cards (weather, markets, trains, nodes)
   +-- Draft Queue              Email drafts with Telegram approve/reject
   +-- Scheduler                User-defined tasks and reminders
-  +-- Memory                   Persistent markdown memory (MEMORY.md + topic files)
+  +-- Memory                   Persistent markdown memory (MEMORY.md + topic files + daily journal)
   +-- Context Compression      Two-tier conversation compression
   +-- Health Probes            Background service health checking
   +-- Failover                 Automatic failover runner for resilience
@@ -581,6 +622,13 @@ All configuration is in `.env`. Only two values are required.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENGINE_BACKEND` | `vllm` | Which engine: `vllm`, `ollama`, `anthropic_api`, `bedrock_api`, `claude_code`, `codex_cli`, `gemini_cli`, `hybrid` |
+
+### Automatic Failover
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FAILOVER_ENABLED` | `true` | Enable automatic failover to backup backend on primary failure |
+| `FAILOVER_BACKEND` | `bedrock_api` | Which backend to fail over to (`bedrock_api`, `anthropic_api`, `gemini_api`) |
 
 ### NVIDIA Nemotron Super / vLLM (default)
 
@@ -747,8 +795,8 @@ vllm serve nvidia/nemotron-3-super \
 PureClaw/
 +-- nexus.py                    Entry point -- starts all subsystems
 +-- config.py                   Environment loading, system prompt, logging
-+-- db.py                       SQLite: sessions, drafts, follow-ups, tasks, audit_log
-+-- engine.py                   Engine abstraction (sync + streaming + audit)
++-- db.py                       SQLite: sessions, drafts, follow-ups, tasks, audit_log, user_profiles
++-- engine.py                   Engine abstraction (sync + streaming + audit + automatic failover)
 +-- memory.py                   Persistent markdown memory system
 +-- scheduler.py                Task scheduler (/schedule, /remind)
 +-- context_compression.py      Two-tier conversation compression
@@ -784,7 +832,7 @@ PureClaw/
 |     +-- whatsapp.py           WhatsApp bridge (baileys sidecar)
 |     +-- email_in.py           IMAP polling email input
 |
-+-- observers/                  16 background observers (cron + persistent)
++-- observers/                  17 background observers (cron + persistent)
 +-- dispatcher/                 Data cards (weather, markets, trains, nodes)
 +-- drafts/                     Email draft queue with approve/reject
 +-- handlers/                   Telegram handlers (voice, photo, document, location)
