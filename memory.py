@@ -44,7 +44,7 @@ SHARED_CONTEXT_PATH = Path(os.environ.get(
 ))
 
 # System files — not user topic files, excluded from list_topic_files()
-_SYSTEM_FILES = {"MEMORY.md", "CONTEXT.md", "LESSONS.md"}
+_SYSTEM_FILES = {"MEMORY.md", "CONTEXT.md", "LESSONS.md", "HEARTBEAT.md"}
 
 MAX_MEMORY_LINES = 200
 MAX_CONTEXT_LINES = 500
@@ -343,6 +343,14 @@ def get_memories_for_injection() -> str:
             mem_lines.append(f"\n... (truncated at {MAX_MEMORY_LINES} lines)")
         parts.append(f"[{AGENT_NAME} Memory]\n" + "\n".join(mem_lines))
 
+    # 4. Recent journal entries
+    try:
+        journal = get_recent_journals(days=2)
+        if journal.strip():
+            parts.append(f"[{AGENT_NAME} Journal]\n" + journal)
+    except Exception:
+        pass
+
     return "\n\n".join(parts)
 
 
@@ -368,6 +376,102 @@ def add_memory(text: str, category: str = "general") -> str:
 # ---------------------------------------------------------------------------
 # Shared context (PureClaw ↔ HAL sync)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Daily journal subsystem
+# ---------------------------------------------------------------------------
+
+JOURNAL_DIR = MEMORY_DIR / "journal"
+JOURNAL_MAX_AGE_DAYS = 30
+_last_purge_date: str | None = None
+
+
+def journal_append(entry: str) -> None:
+    """Append a timestamped line to today's journal file."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    timestamp = now.strftime("%H:%M")
+
+    JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+    path = JOURNAL_DIR / f"{today}.md"
+
+    line = f"- [{timestamp}] {entry}\n"
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as exc:
+        log.warning("Failed to write journal entry: %s", exc)
+
+    # Lazy purge: once per day
+    global _last_purge_date
+    if _last_purge_date != today:
+        _last_purge_date = today
+        try:
+            purge_old_journals()
+        except Exception as exc:
+            log.warning("Journal purge failed: %s", exc)
+
+
+def get_journal(date_str: str | None = None) -> str:
+    """Read a specific day's journal. Default: today."""
+    from datetime import datetime, timezone
+    if date_str is None:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    path = JOURNAL_DIR / f"{date_str}.md"
+    return _read_md(path)
+
+
+def get_recent_journals(days: int = 2) -> str:
+    """Return concatenated journal entries for the last N days."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    parts = []
+    for i in range(days):
+        date = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        content = get_journal(date)
+        if content.strip():
+            parts.append(f"## {date}\n{content}")
+    return "\n".join(parts)
+
+
+def purge_old_journals(max_age_days: int = JOURNAL_MAX_AGE_DAYS) -> int:
+    """Delete journal files older than max_age_days. Returns count deleted."""
+    from datetime import datetime, timezone, timedelta
+    if not JOURNAL_DIR.exists():
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+    deleted = 0
+    for f in JOURNAL_DIR.glob("*.md"):
+        if f.stem < cutoff_str:
+            try:
+                f.unlink()
+                deleted += 1
+            except Exception:
+                pass
+    if deleted:
+        log.info("Purged %d old journal files", deleted)
+    return deleted
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat checklist
+# ---------------------------------------------------------------------------
+
+HEARTBEAT_MD = MEMORY_DIR / "HEARTBEAT.md"
+
+
+def get_heartbeat() -> str:
+    """Read the heartbeat checklist file."""
+    return _read_md(HEARTBEAT_MD)
+
+
+def save_heartbeat(content: str) -> None:
+    """Write the heartbeat checklist file."""
+    _ensure_dir()
+    _atomic_write(HEARTBEAT_MD, content)
+
 
 def get_shared_context() -> str:
     """Read the synced PureClaw MEMORY.md for injection into HAL's prompt."""

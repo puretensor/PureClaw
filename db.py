@@ -280,8 +280,122 @@ def init_db():
         con.execute("CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id)")
         log.info("Created audit_log table")
 
+    # User profiles table (onboarding, timezone, preferences)
+    profile_cols = [row[1] for row in con.execute("PRAGMA table_info(user_profiles)").fetchall()]
+    if not profile_cols:
+        con.execute("""CREATE TABLE user_profiles (
+            chat_id INTEGER PRIMARY KEY,
+            display_name TEXT,
+            timezone TEXT DEFAULT 'UTC',
+            preferences_json TEXT DEFAULT '{}',
+            onboarding_completed INTEGER DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        )""")
+        log.info("Created user_profiles table")
+
     con.commit()
     con.close()
+
+
+# ---------------------------------------------------------------------------
+# User profiles
+# ---------------------------------------------------------------------------
+
+def get_user_profile(chat_id: int) -> dict | None:
+    """Get the user profile for a chat_id. Returns None if no profile exists."""
+    con = _connect()
+    row = con.execute(
+        """SELECT chat_id, display_name, timezone, preferences_json,
+                  onboarding_completed, created_at, updated_at
+           FROM user_profiles WHERE chat_id = ?""",
+        (chat_id,),
+    ).fetchone()
+    con.close()
+    if row is None:
+        return None
+    import json
+    try:
+        prefs = json.loads(row[3]) if row[3] else {}
+    except (json.JSONDecodeError, TypeError):
+        prefs = {}
+    return {
+        "chat_id": row[0],
+        "display_name": row[1],
+        "timezone": row[2],
+        "preferences": prefs,
+        "onboarding_completed": bool(row[4]),
+        "created_at": row[5],
+        "updated_at": row[6],
+    }
+
+
+def upsert_user_profile(chat_id: int, *, display_name: str | None = None,
+                         timezone: str | None = None,
+                         preferences: dict | None = None,
+                         onboarding_completed: bool | None = None) -> dict:
+    """Create or update a user profile. Returns the updated profile dict."""
+    import json
+    now = _now()
+    con = _connect()
+    existing = con.execute(
+        "SELECT chat_id, preferences_json FROM user_profiles WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+
+    if existing:
+        updates, params = [], []
+        if display_name is not None:
+            updates.append("display_name = ?")
+            params.append(display_name)
+        if timezone is not None:
+            updates.append("timezone = ?")
+            params.append(timezone)
+        if preferences is not None:
+            # Merge with existing preferences
+            try:
+                current_prefs = json.loads(existing[1]) if existing[1] else {}
+            except (json.JSONDecodeError, TypeError):
+                current_prefs = {}
+            current_prefs.update(preferences)
+            updates.append("preferences_json = ?")
+            params.append(json.dumps(current_prefs))
+        if onboarding_completed is not None:
+            updates.append("onboarding_completed = ?")
+            params.append(1 if onboarding_completed else 0)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(now)
+            params.append(chat_id)
+            con.execute(
+                f"UPDATE user_profiles SET {', '.join(updates)} WHERE chat_id = ?",
+                params,
+            )
+    else:
+        prefs_json = json.dumps(preferences) if preferences else "{}"
+        con.execute(
+            """INSERT INTO user_profiles
+               (chat_id, display_name, timezone, preferences_json, onboarding_completed, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (chat_id, display_name, timezone or "UTC", prefs_json,
+             1 if onboarding_completed else 0, now, now),
+        )
+
+    con.commit()
+    con.close()
+    return get_user_profile(chat_id)
+
+
+def set_profile_field(chat_id: int, key: str, value: str) -> bool:
+    """Set a profile field. Direct columns for display_name/timezone, JSON for others."""
+    import json
+    if key in ("display_name", "timezone"):
+        kwargs = {key: value}
+        upsert_user_profile(chat_id, **kwargs)
+        return True
+    # Store in preferences_json
+    upsert_user_profile(chat_id, preferences={key: value})
+    return True
 
 
 # ---------------------------------------------------------------------------

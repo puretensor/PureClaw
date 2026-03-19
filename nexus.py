@@ -64,6 +64,7 @@ def _build_observer_registry():
         # github_activity extracted to standalone K8s CronJob on arx3
         # ("observers.github_activity", "GitHubActivityObserver"),
         ("observers.pipeline_watchdog", "PipelineWatchdog"),
+        ("observers.heartbeat", "HeartbeatObserver"),
     ]
 
     import importlib
