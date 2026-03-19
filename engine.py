@@ -246,6 +246,7 @@ async def call_streaming(
     on_progress=None,
     streaming_editor=None,
     extra_system_prompt: str | None = None,
+    chat_id: int | None = None,
 ) -> dict:
     """Async streaming LLM call with real-time progress.
 
@@ -275,6 +276,20 @@ async def call_streaming(
         shared = get_shared_context()
         if shared:
             parts.append(shared)
+    # Inject user profile if chat_id provided
+    if chat_id:
+        try:
+            from db import get_user_profile
+            profile = get_user_profile(chat_id)
+            if profile and profile.get("display_name"):
+                profile_lines = [f"[User Profile]"]
+                profile_lines.append(f"Name: {profile['display_name']}")
+                if profile.get("timezone") and profile["timezone"] != "UTC":
+                    profile_lines.append(f"Timezone: {profile['timezone']}")
+                parts.append("\n".join(profile_lines))
+        except Exception:
+            pass
+
     if parts:
         memory_ctx = "\n\n".join(parts)
 

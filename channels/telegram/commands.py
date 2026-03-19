@@ -48,6 +48,9 @@ from db import (
     list_scheduled_tasks,
     delete_scheduled_task,
     delete_conversation_history,
+    get_user_profile,
+    upsert_user_profile,
+    set_profile_field,
 )
 from engine import call_streaming, split_message, get_model_display
 from channels.telegram.streaming import StreamingEditor
@@ -80,6 +83,13 @@ except ImportError:
     save_memory = add_memory = remove_memory = None
     list_memories = search_memories = memory_count = None
     get_memories_for_injection = read_topic_file = list_topic_files = None
+
+
+# ---------------------------------------------------------------------------
+# Onboarding state machine
+# ---------------------------------------------------------------------------
+
+_onboarding_state: dict[int, dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +127,129 @@ async def _keep_typing(chat):
 
 
 @authorized
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start — onboarding for new users, help for existing."""
+    chat_id = update.effective_chat.id
+    profile = get_user_profile(chat_id)
+
+    if profile and profile.get("onboarding_completed"):
+        await cmd_help(update, context)
+        return
+
+    await update.message.reply_text(
+        "I'm _HAL_ \u2014 the Heterarchical Agentic Layer. "
+        "PureTensor's sovereign infrastructure agent.\n\n"
+        "I manage a fleet of compute nodes, handle email, monitor services, "
+        "process intelligence feeds, and assist with engineering tasks.\n\n"
+        "Before we begin \u2014 what should I call you?",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    _onboarding_state[chat_id] = {"step": "awaiting_name"}
+
+
+@authorized
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /profile — view or set profile fields."""
+    chat_id = update.effective_chat.id
+    args = context.args or []
+
+    if not args:
+        profile = get_user_profile(chat_id)
+        if not profile:
+            await update.message.reply_text(
+                "No profile yet. Use /profile set name <value> to get started."
+            )
+            return
+        lines = ["*Your Profile*"]
+        lines.append(f"Name: {profile.get('display_name') or '(not set)'}")
+        lines.append(f"Timezone: {profile.get('timezone', 'UTC')}")
+        prefs = profile.get("preferences", {})
+        if prefs:
+            for k, v in prefs.items():
+                lines.append(f"{k}: {v}")
+        lines.append(f"Onboarding: {'complete' if profile.get('onboarding_completed') else 'pending'}")
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+        return
+
+    if args[0] == "set" and len(args) >= 3:
+        key = args[1].lower()
+        value = " ".join(args[2:])
+
+        if key == "timezone":
+            try:
+                from zoneinfo import available_timezones
+                if value not in available_timezones():
+                    await update.message.reply_text(
+                        f"Unknown timezone: {value}\n"
+                        "Examples: Europe/London, America/New_York, UTC"
+                    )
+                    return
+            except ImportError:
+                pass  # zoneinfo not available, accept any value
+
+        set_profile_field(chat_id, key if key != "name" else "display_name", value)
+        await update.message.reply_text(f"Profile updated: {key} = {value}")
+        return
+
+    await update.message.reply_text(
+        "Usage:\n"
+        "/profile \u2014 view your profile\n"
+        "/profile set name <value>\n"
+        "/profile set timezone <value>\n"
+        "/profile set <key> <value>"
+    )
+
+
+@authorized
+async def cmd_journal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /journal — view daily journal entries."""
+    args = context.args or []
+
+    try:
+        from memory import get_journal, purge_old_journals
+    except ImportError:
+        await update.message.reply_text("Journal module not available.")
+        return
+
+    if not args:
+        content = get_journal()
+        if not content.strip():
+            await update.message.reply_text("No journal entries for today.")
+            return
+        if len(content) > 4000:
+            content = content[:3997] + "..."
+        await update.message.reply_text(content)
+        return
+
+    arg = args[0].lower()
+    if arg == "yesterday":
+        from datetime import datetime, timezone, timedelta
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        content = get_journal(yesterday)
+        if not content.strip():
+            await update.message.reply_text(f"No journal entries for {yesterday}.")
+            return
+        if len(content) > 4000:
+            content = content[:3997] + "..."
+        await update.message.reply_text(content)
+    elif arg == "purge":
+        deleted = purge_old_journals()
+        await update.message.reply_text(f"Purged {deleted} old journal files.")
+    else:
+        # Treat as date string
+        content = get_journal(arg)
+        if not content.strip():
+            await update.message.reply_text(f"No journal entries for {arg}.")
+            return
+        if len(content) > 4000:
+            content = content[:3997] + "..."
+        await update.message.reply_text(content)
+
+
+@authorized
 async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    _onboarding_state.pop(chat_id, None)
     session = get_session(chat_id)
     model = session["model"] if session else "sonnet"
     name = context.args[0] if context.args else "default"
@@ -297,6 +428,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _onboarding_state.pop(update.effective_chat.id, None)
     await update.message.reply_text(
         "<b>Session Management</b>\n"
         "/new [name] — Archive current &amp; start fresh\n"
@@ -1192,6 +1324,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_text or not user_text.strip():
         return
 
+    # Onboarding intercept — handle name/timezone collection before anything else
+    if chat_id in _onboarding_state:
+        state = _onboarding_state[chat_id]
+        step = state.get("step")
+
+        if step == "awaiting_name":
+            name = user_text.strip()
+            upsert_user_profile(chat_id, display_name=name)
+            _onboarding_state[chat_id]["step"] = "awaiting_timezone"
+            await update.message.reply_text(
+                f"Good to meet you, {name}. "
+                "What timezone are you in? (e.g. Europe/London, America/New_York, UTC)"
+            )
+            return
+
+        elif step == "awaiting_timezone":
+            tz = user_text.strip()
+            try:
+                from zoneinfo import available_timezones
+                if tz not in available_timezones():
+                    await update.message.reply_text(
+                        f"Unknown timezone: {tz}\n"
+                        "Try again (e.g. Europe/London, America/New_York, UTC)"
+                    )
+                    return
+            except ImportError:
+                pass
+
+            upsert_user_profile(chat_id, timezone=tz, onboarding_completed=True)
+            del _onboarding_state[chat_id]
+            await update.message.reply_text(
+                "All set. Here's what I can do:\n\n"
+                "\u2022 Infrastructure: /check, /nodes, /restart, /logs, /disk, /top\n"
+                "\u2022 Sessions: /new, /session, /history, /resume\n"
+                "\u2022 Memory: /remember, /forget, /memories\n"
+                "\u2022 Data: /weather, /markets, /trains\n"
+                "\u2022 Email: drafts, follow-ups, auto-classification\n"
+                "\u2022 Schedule: /schedule, /remind\n\n"
+                "Send me a message or voice note to get started. "
+                "Type /help anytime for the full command list."
+            )
+            return
+
     # Intel pipeline intercept — consume pending state before Claude routing
     if _intel_pending.get(chat_id):
         del _intel_pending[chat_id]
@@ -1235,7 +1410,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             editor = StreamingEditor(update.effective_chat)
             data = await call_streaming(
                 prompt, session_id, model, streaming_editor=editor,
-                extra_system_prompt=extra_sp,
+                extra_system_prompt=extra_sp, chat_id=chat_id,
             )
 
             result_text = data.get("result", "")
@@ -1245,6 +1420,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result_text = "(Empty response from Claude)"
 
             upsert_session(chat_id, new_session_id, model, msg_count + 1)
+
+            # Journal entry (best-effort)
+            try:
+                from memory import journal_append
+                journal_append(f"User: {user_text[:80].replace(chr(10), ' ')}")
+            except Exception:
+                pass
             await maybe_generate_summary(chat_id)
 
             # Finalize streaming message (applies Markdown formatting)
@@ -1428,7 +1610,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             editor = StreamingEditor(update.effective_chat)
             data = await call_streaming(
                 prompt, session_id, model, streaming_editor=editor,
-                extra_system_prompt=extra_sp,
+                extra_system_prompt=extra_sp, chat_id=chat_id,
             )
 
             result_text = data.get("result", "")
@@ -1438,6 +1620,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result_text = "(Empty response from Claude)"
 
             upsert_session(chat_id, new_session_id, model, msg_count + 1)
+
+            # Journal entry for voice (best-effort)
+            try:
+                from memory import journal_append
+                journal_append(f"Voice: {transcript[:80].replace(chr(10), ' ')}")
+            except Exception:
+                pass
+
             await maybe_generate_summary(chat_id)
 
             if editor.text:

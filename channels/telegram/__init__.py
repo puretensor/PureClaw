@@ -22,7 +22,7 @@ class TelegramChannel(Channel):
         )
         from channels.telegram.commands import (
             cmd_new, cmd_opus, cmd_sonnet, cmd_ollama, cmd_nemotron, cmd_backend,
-            cmd_voice, cmd_status, cmd_help,
+            cmd_voice, cmd_status, cmd_help, cmd_start, cmd_profile, cmd_journal,
             cmd_weather_card, cmd_trains_card, cmd_central, cmd_riverside,
             cmd_markets_card, cmd_nodes_card,
             cmd_session, cmd_history, cmd_resume,
@@ -57,7 +57,9 @@ class TelegramChannel(Channel):
         self.app.add_handler(CommandHandler("voice", cmd_voice))
         self.app.add_handler(CommandHandler("status", cmd_status))
         self.app.add_handler(CommandHandler("help", cmd_help))
-        self.app.add_handler(CommandHandler("start", cmd_help))
+        self.app.add_handler(CommandHandler("start", cmd_start))
+        self.app.add_handler(CommandHandler("profile", cmd_profile))
+        self.app.add_handler(CommandHandler("journal", cmd_journal))
 
         # Scheduled task & reminder commands
         self.app.add_handler(CommandHandler("schedule", cmd_schedule))
