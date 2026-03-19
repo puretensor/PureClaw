@@ -83,7 +83,7 @@ async def text_to_voice_note(text: str) -> bytes | None:
         # Request WAV from local voice TTS daemon
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                TTS_API_URL,
+                TTS_API_URL.rstrip("/") + "/tts",
                 json={"text": cleaned},
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
