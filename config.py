@@ -138,9 +138,11 @@ HYBRID_CLI_REMOTE = os.environ.get("HYBRID_CLI_REMOTE", "false").lower() in ("tr
 HYBRID_TC_HOST = os.environ.get("HYBRID_TC_HOST", "tensor-core")
 
 # Subagent parallelism
+SUBAGENT_BACKEND = os.environ.get("SUBAGENT_BACKEND", ENGINE_BACKEND)
 SUBAGENT_MODEL = os.environ.get("SUBAGENT_MODEL", "sonnet")
 SUBAGENT_MAX_ITER = int(os.environ.get("SUBAGENT_MAX_ITER", "15"))
-SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT", "180"))
+SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT", "1800"))
+SUBAGENT_THINKING = os.environ.get("SUBAGENT_THINKING", "false").lower() == "true"
 
 # Context compression
 COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"))

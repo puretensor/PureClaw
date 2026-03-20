@@ -233,6 +233,11 @@ class VLLMBackend:
             except Exception:
                 pass
             api_msgs = ([{"role": "system", "content": system_str}] + msgs) if system_str else msgs
+            extra = {"top_k": 20, "min_p": 0.05, "repetition_penalty": 1.05}
+            # Sub-agents skip reasoning traces for faster responses
+            from backends.tools import _tool_context
+            if getattr(_tool_context, "is_subagent", False):
+                extra["chat_template_kwargs"] = {"enable_thinking": False}
             return self._client.chat.completions.create(
                 model=self._model,
                 messages=api_msgs,
@@ -240,7 +245,7 @@ class VLLMBackend:
                 max_tokens=self._max_tokens,
                 temperature=0.3 if self._tools else 0.7,
                 top_p=0.90,
-                extra_body={"top_k": 20, "min_p": 0.05, "repetition_penalty": 1.05},
+                extra_body=extra,
                 timeout=min(timeout, self._total_timeout),
             )
 
