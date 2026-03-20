@@ -92,7 +92,7 @@ async def main():
 
     # Import here to ensure config/db are ready
     from channels.telegram import TelegramChannel
-    from config import DISCORD_BOT_TOKEN, WA_ENABLED, EMAIL_CHANNEL_ENABLED
+    from config import DISCORD_BOT_TOKEN, WA_ENABLED, EMAIL_CHANNEL_ENABLED, TERMINAL_WS_ENABLED
 
     telegram = TelegramChannel()
     registry = _build_observer_registry()
@@ -127,6 +127,12 @@ async def main():
         wa_channel = WhatsAppChannel(
             instances=instances,
         )
+
+    # Terminal WebSocket — only start if enabled
+    terminal_channel = None
+    if TERMINAL_WS_ENABLED:
+        from channels.terminal import TerminalChannel
+        terminal_channel = TerminalChannel()
 
     # Graceful shutdown handler
     shutdown_event = asyncio.Event()
@@ -178,6 +184,10 @@ async def main():
                     obs_instance._event_loop = asyncio.get_event_loop()
                     break
 
+        # Start Terminal WebSocket channel (if enabled)
+        if terminal_channel:
+            await terminal_channel.start()
+
         # Start observer registry loop
         observer_task = asyncio.create_task(registry.run_loop())
 
@@ -207,6 +217,8 @@ async def main():
                 await observer_task
             except asyncio.CancelledError:
                 pass
+        if terminal_channel:
+            await terminal_channel.stop()
         if wa_channel:
             await wa_channel.stop()
         if discord_channel:

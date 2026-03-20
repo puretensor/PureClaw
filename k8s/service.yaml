@@ -13,3 +13,8 @@ spec:
       targetPort: 9876
       nodePort: 30876
       protocol: TCP
+    - name: terminal-ws
+      port: 9877
+      targetPort: 9877
+      nodePort: 30879
+      protocol: TCP

@@ -11,7 +11,7 @@ Env vars:
     OLLAMA_URL      — e.g. http://localhost:11434 (empty string = skip Ollama)
     OLLAMA_MODEL    — e.g. qwen3-235b-a22b-q4km
     GEMINI_API_KEY  — Google AI Studio key for Gemini Flash
-    GEMINI_MODEL    — default: gemini-3.0-flash
+    GEMINI_MODEL    — default: gemini-3-flash-preview
 """
 
 import json
@@ -45,7 +45,7 @@ def call_llm(
 
     Returns:
         (content, backend_name) — the generated text and which backend was used.
-        backend_name is e.g. "Ollama/qwen3-235b-a22b-q4km" or "Gemini/gemini-3.0-flash".
+        backend_name is e.g. "Ollama/qwen3-235b-a22b-q4km" or "Gemini/gemini-3-flash-preview".
 
     Raises:
         RuntimeError if all attempted backends fail.
@@ -53,7 +53,7 @@ def call_llm(
     ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
     ollama_model = override_ollama_model or os.environ.get("OLLAMA_MODEL", "qwen3-235b-a22b-q4km")
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    gemini_model = override_gemini_model or os.environ.get("GEMINI_MODEL", "gemini-3.0-flash")
+    gemini_model = override_gemini_model or os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 
     if preferred_backend == "gemini":
         # Gemini first, Ollama fallback
@@ -229,7 +229,7 @@ def _call_gemini(
 
     # Gemini 2.5+ models use thinking — set a separate budget so thinking
     # tokens don't eat into the actual response output.
-    if "2.5" in model or "3." in model:
+    if "2.5" in model or "gemini-3" in model:
         gen_config["thinkingConfig"] = {"thinkingBudget": 8192}
 
     payload = {

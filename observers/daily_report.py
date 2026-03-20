@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -526,12 +527,6 @@ Rules:
             "base_url": "https://api.deepseek.com/v1",
             "model": "deepseek-chat",
         },
-        {
-            "name": "xAI Grok",
-            "env_key": "XAI_API_KEY",
-            "base_url": "https://api.x.ai/v1",
-            "model": "grok-3-mini",
-        },
     ]
 
     SYSTEM_PROMPT = (
@@ -561,7 +556,7 @@ Rules:
             system_instruction=self.SYSTEM_PROMPT,
         )
         response = client.models.generate_content(
-            model="gemini-3.0-flash",
+            model="gemini-3-flash-preview",
             contents=prompt,
             config=config,
         )
@@ -596,6 +591,43 @@ Rules:
         )
 
         return response.choices[0].message.content or ""
+
+    def _call_xai_grok(self, prompt: str, timeout: int = 180) -> str:
+        """Call xAI Grok via Responses API with live web search.
+
+        Returns the response text. Raises on failure.
+        """
+        api_key = os.environ.get("XAI_API_KEY", "")
+        if not api_key:
+            raise ValueError("xAI Grok: XAI_API_KEY not set")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "grok-4.20-0309-non-reasoning",
+            "input": [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "max_output_tokens": 8192,
+            "temperature": 0.3,
+            "tools": [{"type": "web_search"}],
+        }
+
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request("https://api.x.ai/v1/responses",
+                                    data=data, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result = json.loads(resp.read().decode())
+
+        for item in result.get("output", []):
+            if item.get("type") == "message":
+                for part in item.get("content", []):
+                    if part.get("type") == "output_text":
+                        return part.get("text", "").strip()
+        return ""
 
     def synthesize_report(self, cc_reports: list[dict], voice_memos: list[dict],
                           date_str: str) -> dict | str:
@@ -639,7 +671,7 @@ Rules:
         log.warning("All %d Bedrock attempts failed, trying fallback providers",
                     self.MAX_RETRIES)
 
-        # 2. Try OpenAI-compatible fallbacks (DeepSeek, xAI)
+        # 2. Try OpenAI-compatible fallbacks (DeepSeek)
         for provider in self.OPENAI_COMPAT_PROVIDERS:
             for attempt in range(1, self.MAX_RETRIES + 1):
                 try:
@@ -669,6 +701,31 @@ Rules:
 
             log.warning("All %d %s attempts failed, trying next provider",
                         self.MAX_RETRIES, provider["name"])
+
+        # 3. Try xAI Grok via Responses API (with web search)
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                log.info("xAI Grok synthesis attempt %d/%d", attempt, self.MAX_RETRIES)
+                result = self._call_xai_grok(prompt)
+                if result and len(result.strip()) > 100:
+                    parsed = self._parse_json_response(result)
+                    if parsed:
+                        log.info("xAI Grok returned valid structured JSON")
+                        return parsed
+                    log.warning("xAI Grok response not valid JSON on attempt %d", attempt)
+                    last_error = "xAI Grok: invalid JSON"
+                else:
+                    log.warning("xAI Grok returned insufficient content (%d chars)",
+                                len(result) if result else 0)
+                    last_error = "xAI Grok: insufficient content"
+            except Exception as e:
+                last_error = f"xAI Grok: {e}"
+                log.warning("xAI Grok attempt %d failed: %s", attempt, e)
+
+            if attempt < self.MAX_RETRIES:
+                delay = self.RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                log.info("Retrying xAI Grok in %d seconds...", delay)
+                time.sleep(delay)
 
         log.warning("All providers failed (last: %s) \u2014 using smart collation", last_error)
         return self._raw_collation(cc_reports, voice_memos, date_str)

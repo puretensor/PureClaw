@@ -60,7 +60,7 @@ class DailySnippetObserver(Observer):
                     temperature=0.7,
                 )
                 response = client.models.generate_content(
-                    model="gemini-3.0-flash",
+                    model="gemini-3-flash-preview",
                     contents=[{"role": "user", "parts": [{"text": prompt}]}],
                     config=config,
                 )
@@ -551,7 +551,7 @@ Return ONLY the JSON."""
             )
 
             response = client.models.generate_content(
-                model="gemini-3.0-flash",
+                model="gemini-3-flash-preview",
                 contents=prompt,
                 config=config,
             )

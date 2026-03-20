@@ -50,6 +50,6 @@ ENV HOME=/app \
     PYTHONUNBUFFERED=1 \
     CLAUDE_BIN=/usr/local/bin/claude
 
-EXPOSE 9876
+EXPOSE 9876 9877
 
 CMD ["python3", "nexus.py"]

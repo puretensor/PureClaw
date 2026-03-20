@@ -25,10 +25,10 @@ _gemini_client = None
 
 # Map legacy Bedrock model IDs to Gemini models
 _GEMINI_MODEL_MAP = {
-    "us.anthropic.claude-sonnet-4-6": "gemini-3.0-flash",
-    "us.anthropic.claude-haiku-4-5-20251001": "gemini-3.0-flash",
-    "us.anthropic.claude-opus-4-6": "gemini-3.0-pro",
-    "us.anthropic.claude-opus-4-6-v1": "gemini-3.0-pro",
+    "us.anthropic.claude-sonnet-4-6": "gemini-3-flash-preview",
+    "us.anthropic.claude-haiku-4-5-20251001": "gemini-3-flash-preview",
+    "us.anthropic.claude-opus-4-6": "gemini-3.1-pro-preview",
+    "us.anthropic.claude-opus-4-6-v1": "gemini-3.1-pro-preview",
 }
 
 
@@ -50,7 +50,7 @@ def _resolve_model(model_id: str) -> str:
 
 def call_claude_bedrock(system_prompt: str, user_prompt: str, timeout: int = 60,
                         temperature: float = 0.3,
-                        model_id: str = "gemini-3.0-flash") -> str:
+                        model_id: str = "gemini-3-flash-preview") -> str:
     """Call Gemini via google-genai SDK. Returns text content.
 
     Kept as call_claude_bedrock for backward compatibility with existing callers.
@@ -75,7 +75,7 @@ def call_claude_bedrock_haiku(system_prompt: str, user_prompt: str, timeout: int
                               temperature: float = 0.3) -> str:
     """Call Gemini 3.0 Flash (fast/cheap). Backward-compatible name."""
     return call_claude_bedrock(system_prompt, user_prompt, timeout, temperature,
-                               model_id="gemini-3.0-flash")
+                               model_id="gemini-3-flash-preview")
 
 
 # Backward-compatible aliases
@@ -83,8 +83,8 @@ call_gemini_flash = call_claude_bedrock_haiku
 
 
 def call_xai_grok(system_prompt: str, user_prompt: str, timeout: int = 60,
-                  temperature: float = 0.3, tools: list | None = None) -> str:
-    """Call xAI Grok via Chat Completions API. Returns text content."""
+                  temperature: float = 0.3) -> str:
+    """Call xAI Grok via Responses API with live web search. Returns text content."""
     api_key = os.environ.get("XAI_API_KEY", "")
     if not api_key:
         raise RuntimeError("XAI_API_KEY not set")
@@ -95,25 +95,29 @@ def call_xai_grok(system_prompt: str, user_prompt: str, timeout: int = 60,
         "User-Agent": "PureTensor-Nexus/2.0",
     }
     payload = {
-        "model": "grok-3",
-        "messages": [
+        "model": "grok-4.20-0309-non-reasoning",
+        "input": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "max_tokens": 4096,
+        "max_output_tokens": 4096,
         "temperature": temperature,
+        "tools": [{"type": "web_search"}],
     }
 
     data = json.dumps(payload).encode()
-    req = urllib.request.Request("https://api.x.ai/v1/chat/completions",
+    req = urllib.request.Request("https://api.x.ai/v1/responses",
                                 data=data, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         result = json.loads(resp.read().decode())
 
-    choices = result.get("choices", [])
-    if not choices:
-        return ""
-    return choices[0].get("message", {}).get("content", "").strip()
+    # Extract text from Responses API output structure
+    for item in result.get("output", []):
+        if item.get("type") == "message":
+            for part in item.get("content", []):
+                if part.get("type") == "output_text":
+                    return part.get("text", "").strip()
+    return ""
 
 
 # Lazy-init Bedrock client

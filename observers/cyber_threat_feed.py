@@ -483,7 +483,7 @@ class CyberThreatFeedObserver(Observer):
             num_predict=8192,
             temperature=0.4,
             preferred_backend="gemini",
-            override_gemini_model="gemini-3.0-flash",
+            override_gemini_model="gemini-3-flash-preview",
         )
 
     # -------------------------------------------------------------------

@@ -698,7 +698,7 @@ AWS credentials are read from standard sources (`~/.aws/credentials`, env vars, 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GEMINI_BIN` | auto-detected | Path to `gemini` binary |
-| `GEMINI_CLI_MODEL` | (Gemini default) | Model name (e.g. `gemini-3.0-flash`) |
+| `GEMINI_CLI_MODEL` | (Gemini default) | Model name (e.g. `gemini-3-flash-preview`) |
 
 ### Hybrid
 
