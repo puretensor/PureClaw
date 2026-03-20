@@ -306,7 +306,7 @@ class IntelBriefingObserver(Observer):
 
     def _call_llm(self, prompt: str, timeout: int = 360, brand: str = "puretensor") -> tuple[str, str]:
         """Call LLM via shared module — Gemini-first to free up GPU for
-        interactive work.  Uses gemini-2.5-flash (not lite) for better
+        interactive work.  Uses gemini-3.0-flash (not lite) for better
         analytical writing quality.  Falls back to Ollama if Gemini fails.
 
         Returns:
@@ -321,7 +321,7 @@ class IntelBriefingObserver(Observer):
             num_predict=6144,
             temperature=0.4,
             preferred_backend="gemini",
-            override_gemini_model="gemini-2.5-flash",
+            override_gemini_model="gemini-3.0-flash",
         )
 
     # ── Deduplication ────────────────────────────────────────────────────

@@ -1,13 +1,14 @@
-"""Shared cloud LLM callers — Gemini (Google), xAI Grok, OpenAI (ChatGPT), DeepSeek.
+"""Shared cloud LLM callers — Gemini (Google), xAI Grok, Bedrock (Claude), DeepSeek.
 
 Used by intel_deep_analysis for the AI council (parallel significance scoring).
-All callers use only urllib/httpx/google-genai — no heavy SDK dependencies.
+All callers use only urllib/google-genai/boto3 — no heavy SDK dependencies.
 
 Env vars:
     GOOGLE_API_KEY         — Google AI / Gemini API key (primary)
     GEMINI_API_KEY         — Google AI / Gemini API key (fallback)
     XAI_API_KEY            — xAI API key (Grok)
-    OPENAI_API_KEY         — OpenAI API key (ChatGPT)
+    AWS_ACCESS_KEY_ID      — AWS Bedrock access key
+    AWS_SECRET_ACCESS_KEY  — AWS Bedrock secret key
     DEEPSEEK_API_KEY       — DeepSeek API key
 """
 
@@ -24,10 +25,10 @@ _gemini_client = None
 
 # Map legacy Bedrock model IDs to Gemini models
 _GEMINI_MODEL_MAP = {
-    "us.anthropic.claude-sonnet-4-6": "gemini-2.5-flash",
-    "us.anthropic.claude-haiku-4-5-20251001": "gemini-2.0-flash",
-    "us.anthropic.claude-opus-4-6": "gemini-2.5-pro",
-    "us.anthropic.claude-opus-4-6-v1": "gemini-2.5-pro",
+    "us.anthropic.claude-sonnet-4-6": "gemini-3.0-flash",
+    "us.anthropic.claude-haiku-4-5-20251001": "gemini-3.0-flash",
+    "us.anthropic.claude-opus-4-6": "gemini-3.0-pro",
+    "us.anthropic.claude-opus-4-6-v1": "gemini-3.0-pro",
 }
 
 
@@ -49,7 +50,7 @@ def _resolve_model(model_id: str) -> str:
 
 def call_claude_bedrock(system_prompt: str, user_prompt: str, timeout: int = 60,
                         temperature: float = 0.3,
-                        model_id: str = "gemini-2.5-flash") -> str:
+                        model_id: str = "gemini-3.0-flash") -> str:
     """Call Gemini via google-genai SDK. Returns text content.
 
     Kept as call_claude_bedrock for backward compatibility with existing callers.
@@ -72,9 +73,9 @@ def call_claude_bedrock(system_prompt: str, user_prompt: str, timeout: int = 60,
 
 def call_claude_bedrock_haiku(system_prompt: str, user_prompt: str, timeout: int = 60,
                               temperature: float = 0.3) -> str:
-    """Call Gemini 2.0 Flash (fast/cheap). Backward-compatible name."""
+    """Call Gemini 3.0 Flash (fast/cheap). Backward-compatible name."""
     return call_claude_bedrock(system_prompt, user_prompt, timeout, temperature,
-                               model_id="gemini-2.0-flash")
+                               model_id="gemini-3.0-flash")
 
 
 # Backward-compatible aliases
@@ -94,7 +95,7 @@ def call_xai_grok(system_prompt: str, user_prompt: str, timeout: int = 60,
         "User-Agent": "PureTensor-Nexus/2.0",
     }
     payload = {
-        "model": "grok-3-mini-fast",
+        "model": "grok-3",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -115,37 +116,32 @@ def call_xai_grok(system_prompt: str, user_prompt: str, timeout: int = 60,
     return choices[0].get("message", {}).get("content", "").strip()
 
 
-def call_openai(system_prompt: str, user_prompt: str, timeout: int = 60,
-                temperature: float = 0.3) -> str:
-    """Call OpenAI ChatGPT via Chat Completions API. Returns text content."""
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
+# Lazy-init Bedrock client
+_bedrock_client = None
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": "gpt-4.1-mini",
-        "max_tokens": 4096,
-        "temperature": temperature,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
 
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request("https://api.openai.com/v1/chat/completions",
-                                data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        result = json.loads(resp.read().decode())
+def _get_bedrock_client():
+    global _bedrock_client
+    if _bedrock_client is None:
+        import boto3
+        _bedrock_client = boto3.client(
+            "bedrock-runtime",
+            region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        )
+    return _bedrock_client
 
-    choices = result.get("choices", [])
-    if not choices:
-        return ""
-    return choices[0].get("message", {}).get("content", "").strip()
+
+def call_bedrock_sonnet(system_prompt: str, user_prompt: str, timeout: int = 60,
+                        temperature: float = 0.3) -> str:
+    """Call Claude Sonnet 4.6 via AWS Bedrock. Returns text content."""
+    client = _get_bedrock_client()
+    response = client.converse(
+        modelId="us.anthropic.claude-sonnet-4-6",
+        messages=[{"role": "user", "content": [{"text": user_prompt}]}],
+        system=[{"text": system_prompt}],
+        inferenceConfig={"temperature": temperature, "maxTokens": 4096},
+    )
+    return response["output"]["message"]["content"][0]["text"].strip()
 
 
 # Backward-compatible alias

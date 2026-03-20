@@ -33,7 +33,7 @@ if _nexus_root not in _sys.path:
 
 from observers.base import ALERT_BOT_TOKEN, Observer, ObserverContext, ObserverResult
 from observers.cloud_llm import (
-    call_gemini_flash, call_xai_grok, call_openai, call_deepseek, extract_json,
+    call_gemini_flash, call_xai_grok, call_bedrock_sonnet, call_deepseek, extract_json,
 )
 
 log = logging.getLogger("nexus")
@@ -394,7 +394,7 @@ class IntelDeepAnalysisObserver(Observer):
         callers = {
             "gemini": lambda: call_gemini_flash(system, prompt, timeout=45),
             "grok": lambda: call_xai_grok(system, prompt, timeout=45),
-            "chatgpt": lambda: call_openai(system, prompt, timeout=45),
+            "bedrock": lambda: call_bedrock_sonnet(system, prompt, timeout=45),
             "deepseek": lambda: call_deepseek(system, prompt, timeout=45),
         }
 
@@ -573,7 +573,7 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
                 num_predict=8192,
                 temperature=0.4,
                 preferred_backend="gemini",
-                override_gemini_model="gemini-2.5-flash",
+                override_gemini_model="gemini-3.0-flash",
             )
         except Exception as e:
             log.error("intel_deep_analysis: article generation failed (%s): %s", brand, e)
@@ -905,7 +905,7 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
                 system_prompt="Write 2-3 sentence intelligence teasers. Never exceed 60 words.",
                 user_prompt=prompt, timeout=60, num_predict=150,
                 temperature=0.3, preferred_backend="gemini",
-                override_gemini_model="gemini-2.5-flash",
+                override_gemini_model="gemini-3.0-flash",
             )
             # Hard truncate: max 3 sentences, max 300 chars
             text = summary.strip().replace("\n", " ").replace("  ", " ")
