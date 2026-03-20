@@ -381,21 +381,37 @@ class DarwinState:
 
     @classmethod
     def from_json(cls, json_str: str) -> "DarwinState":
-        """Restore state from a JSON snapshot."""
+        """Restore state from a JSON snapshot.
+
+        Re-resolves TIPLOCs against the current mapping so that snapshot
+        data benefits from any mapping additions since the snapshot was taken.
+        """
         state = cls()
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError:
             return state
 
+        re_resolved = 0
         for rid, svc in data.get("services", {}).items():
             state.services[rid] = svc
             for cp in svc.get("calling_points", []):
+                # Re-resolve TIPLOC→CRS using current mapping
+                tiploc = cp.get("tiploc", "")
+                if tiploc and not cp.get("crs"):
+                    new_crs = state.tiploc_to_crs.get(tiploc)
+                    if new_crs:
+                        cp["crs"] = new_crs
+                        cp["name"] = _STATION_NAMES_CACHE.get(new_crs, new_crs)
+                        re_resolved += 1
                 crs = cp.get("crs")
                 if crs:
                     if crs not in state.station_index:
                         state.station_index[crs] = set()
                     state.station_index[crs].add(rid)
+
+        if re_resolved:
+            log.info("[darwin_consumer] Re-resolved %d calling points from updated TIPLOC map", re_resolved)
 
         state.station_messages = data.get("station_messages", {})
         stats = data.get("stats", {})
@@ -847,9 +863,11 @@ class DarwinConsumer(Observer):
         # Initialize state (try to load from snapshot)
         state = DarwinState()
         snapshot_path = Path(self.snapshot_path)
+        has_snapshot = False
         if snapshot_path.exists():
             try:
                 state = DarwinState.from_json(snapshot_path.read_text())
+                has_snapshot = len(state.services) > 0
                 log.info(
                     "[darwin_consumer] Restored state from snapshot: "
                     "%d services, %d stations",
@@ -865,7 +883,8 @@ class DarwinConsumer(Observer):
 
         parser = DarwinParser(state)
 
-        # Kafka consumer config
+        # Kafka consumer config — seek to earliest when no snapshot
+        # so we replay the full topic and rebuild state
         conf = {
             "bootstrap.servers": self.bootstrap,
             "security.protocol": "SASL_SSL",
@@ -873,7 +892,7 @@ class DarwinConsumer(Observer):
             "sasl.username": self.api_key,
             "sasl.password": self.api_secret,
             "group.id": self.group_id,
-            "auto.offset.reset": "latest",
+            "auto.offset.reset": "earliest" if not has_snapshot else "latest",
             "enable.auto.commit": True,
             "session.timeout.ms": 45000,
             "max.poll.interval.ms": 300000,
@@ -881,12 +900,27 @@ class DarwinConsumer(Observer):
 
         last_snapshot = 0
         last_prune = 0
+        seek_to_start = not has_snapshot
 
         while True:
             consumer = None
             try:
                 consumer = Consumer(conf)
-                consumer.subscribe([self.topic])
+                if seek_to_start:
+                    # Reset committed offsets so consumer replays from start
+                    def on_assign(c, partitions):
+                        for p in partitions:
+                            p.offset = 0  # OFFSET_BEGINNING
+                        c.assign(partitions)
+                        log.info(
+                            "[darwin_consumer] Seeking to beginning of %d partitions "
+                            "(no snapshot — full replay)",
+                            len(partitions),
+                        )
+                    consumer.subscribe([self.topic], on_assign=on_assign)
+                    seek_to_start = False  # only on first connect
+                else:
+                    consumer.subscribe([self.topic])
                 state.stats["connected"] = True
                 log.info(
                     "[darwin_consumer] Connected to Kafka topic: %s",

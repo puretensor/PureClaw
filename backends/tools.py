@@ -978,6 +978,49 @@ _SUBAGENT_DEFAULT_TOOLS = ["read_file", "glob", "grep", "web_search", "web_fetch
 _SUBAGENT_MAX_ITERATIONS = int(os.environ.get("SUBAGENT_MAX_ITER", "15"))
 _SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT", "180"))
 
+# Singleton backend — created once, shallow-copied per call to avoid re-init overhead
+_SUBAGENT_BACKEND_INSTANCE = None
+_SUBAGENT_BACKEND_LOCK = threading.Lock()
+
+# Short-lived memory cache — avoids DB round-trip on every parallel spawn
+_SUBAGENT_MEMORY_CACHE: str | None = None
+_SUBAGENT_MEMORY_CACHE_TIME: float = 0.0
+_SUBAGENT_MEMORY_TTL = 30  # seconds
+
+
+def _get_subagent_backend():
+    """Return cached subagent backend, initializing on first call."""
+    global _SUBAGENT_BACKEND_INSTANCE
+    if _SUBAGENT_BACKEND_INSTANCE is not None:
+        return _SUBAGENT_BACKEND_INSTANCE
+    with _SUBAGENT_BACKEND_LOCK:
+        if _SUBAGENT_BACKEND_INSTANCE is not None:
+            return _SUBAGENT_BACKEND_INSTANCE
+        from config import SUBAGENT_BACKEND
+        if SUBAGENT_BACKEND == "bedrock_api":
+            from backends.bedrock_api import BedrockAPIBackend
+            _SUBAGENT_BACKEND_INSTANCE = BedrockAPIBackend()
+        else:
+            from backends.vllm import VLLMBackend
+            _SUBAGENT_BACKEND_INSTANCE = VLLMBackend()
+        log.info("Subagent backend singleton initialized: %s", _SUBAGENT_BACKEND_INSTANCE.name)
+    return _SUBAGENT_BACKEND_INSTANCE
+
+
+def _get_subagent_memory() -> str | None:
+    """Return memory context with a short TTL cache to avoid per-spawn DB hits."""
+    global _SUBAGENT_MEMORY_CACHE, _SUBAGENT_MEMORY_CACHE_TIME
+    now = time.monotonic()
+    if _SUBAGENT_MEMORY_CACHE is not None and (now - _SUBAGENT_MEMORY_CACHE_TIME) < _SUBAGENT_MEMORY_TTL:
+        return _SUBAGENT_MEMORY_CACHE
+    try:
+        from memory import get_memories_for_injection
+        _SUBAGENT_MEMORY_CACHE = get_memories_for_injection() or None
+        _SUBAGENT_MEMORY_CACHE_TIME = now
+    except Exception:
+        _SUBAGENT_MEMORY_CACHE = None
+    return _SUBAGENT_MEMORY_CACHE
+
 
 def _exec_spawn_subagent(args: dict, **_kwargs) -> tuple[str, list[str]]:
     """Spawn a subagent with its own conversation via configured backend."""
@@ -1002,15 +1045,16 @@ def _exec_spawn_subagent(args: dict, **_kwargs) -> tuple[str, list[str]]:
 
 
 def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
-    """Run a subagent conversation synchronously via configured backend."""
+    """Run a subagent conversation synchronously via configured backend.
+
+    Uses a shallow copy of the singleton backend to reuse the underlying HTTP
+    client/connection pool while keeping per-call tool configuration isolated.
+    """
+    import copy
     from config import SUBAGENT_BACKEND
 
-    if SUBAGENT_BACKEND == "bedrock_api":
-        from backends.bedrock_api import BedrockAPIBackend
-        backend = BedrockAPIBackend()
-    else:
-        from backends.vllm import VLLMBackend
-        backend = VLLMBackend()
+    # Reuse singleton — avoids creating new httpx clients on every spawn
+    backend = copy.copy(_get_subagent_backend())
 
     # Filter tool schemas — exclude spawn_subagent to prevent nesting
     allowed = set(tool_names)
@@ -1024,13 +1068,8 @@ def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
         "You cannot spawn further subagents. When done, provide your final answer as text."
     )
 
-    # Inject full memory context — subagents need fleet topology, IPs, credentials
-    memory_ctx = None
-    try:
-        from memory import get_memories_for_injection
-        memory_ctx = get_memories_for_injection() or None
-    except Exception:
-        pass
+    # Use cached memory — avoids a DB round-trip on every parallel spawn
+    memory_ctx = _get_subagent_memory()
 
     # Mark thread as subagent context
     _tool_context.is_subagent = True
