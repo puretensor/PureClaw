@@ -44,7 +44,7 @@ BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "64000"))
 BEDROCK_THINKING_BUDGET = int(os.environ.get("BEDROCK_THINKING_BUDGET", "0"))
 
 # Gemini API (primary cloud LLM)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.0-flash")
 GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "65536"))
 GEMINI_THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
 
@@ -139,7 +139,7 @@ SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT", "180"))
 # Context compression
 COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"))
 PRESERVE_RECENT_MESSAGES = int(os.environ.get("PRESERVE_RECENT_MESSAGES", "40"))
-SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-2.0-flash")
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-3.0-flash")
 
 # Security policy
 SECURITY_POLICY_PATH = os.environ.get("SECURITY_POLICY_PATH", "")

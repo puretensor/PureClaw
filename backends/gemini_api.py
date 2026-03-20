@@ -25,20 +25,19 @@ log = logging.getLogger("nexus")
 
 # Model map — short names to Gemini model IDs
 _GEMINI_MODEL_MAP = {
-    "sonnet": "gemini-2.5-flash",
-    "opus": "gemini-2.5-pro",
-    "haiku": "gemini-2.0-flash",
+    "sonnet": "gemini-3.0-flash",
+    "opus": "gemini-3.0-pro",
+    "haiku": "gemini-3.0-flash",
     # Legacy Bedrock IDs
-    "us.anthropic.claude-sonnet-4-6": "gemini-2.5-flash",
-    "us.anthropic.claude-opus-4-6": "gemini-2.5-pro",
-    "us.anthropic.claude-haiku-4-5-20251001": "gemini-2.0-flash",
+    "us.anthropic.claude-sonnet-4-6": "gemini-3.0-flash",
+    "us.anthropic.claude-opus-4-6": "gemini-3.0-pro",
+    "us.anthropic.claude-haiku-4-5-20251001": "gemini-3.0-flash",
 }
 
 # Pricing per million tokens (USD) for cost logging
 _PRICING = {
-    "gemini-2.5-flash": (0.15, 0.60),
-    "gemini-2.5-pro": (1.25, 10.0),
-    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-3.0-flash": (0.15, 0.60),
+    "gemini-3.0-pro": (1.25, 10.0),
 }
 
 
@@ -183,7 +182,7 @@ class GeminiAPIBackend:
             raise ValueError("GOOGLE_API_KEY / GEMINI_API_KEY not set")
 
         self._client = genai.Client(api_key=api_key)
-        self._default_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        self._default_model = os.environ.get("GEMINI_MODEL", "gemini-3.0-flash")
         self._max_tokens = int(os.environ.get("GEMINI_MAX_TOKENS", "65536"))
         self._thinking_budget = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
         self._tools_enabled = ANTHROPIC_TOOLS_ENABLED

@@ -60,7 +60,7 @@ class DailySnippetObserver(Observer):
                     temperature=0.7,
                 )
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.0-flash",
                     contents=[{"role": "user", "parts": [{"text": prompt}]}],
                     config=config,
                 )
@@ -551,7 +551,7 @@ Return ONLY the JSON."""
             )
 
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.0-flash",
                 contents=prompt,
                 config=config,
             )
@@ -626,7 +626,7 @@ Return ONLY the JSON."""
 
         roles = {
             "accuracy_checker": {
-                "model": "chatgpt",
+                "model": "bedrock",
                 "system": (
                     "You are a fact-checking editor for an intelligence briefing service. "
                     "You have been given the source headlines that the brief was generated from. "

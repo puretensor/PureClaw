@@ -146,7 +146,7 @@ class WeeklyReportObserver(Observer):
             system_instruction=SYSTEM_PROMPT,
         )
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.0-flash",
             contents=prompt,
             config=config,
         )

@@ -11,7 +11,7 @@ Usage:
         content="Article text here...",
         roles={
             "editor": {
-                "model": "chatgpt",
+                "model": "bedrock",
                 "system": "You are an editor-in-chief...",
                 "prompt": "Evaluate this article for prose quality...",
             },
@@ -38,7 +38,7 @@ if _nexus_root not in _sys.path:
     _sys.path.insert(0, _nexus_root)
 
 from observers.cloud_llm import (
-    call_openai,
+    call_bedrock_sonnet,
     call_deepseek,
     call_gemini_flash,
     call_xai_grok,
@@ -49,7 +49,7 @@ log = logging.getLogger("nexus")
 
 # Model name → caller function
 MODEL_CALLERS = {
-    "chatgpt": call_openai,
+    "bedrock": call_bedrock_sonnet,
     "gemini": call_gemini_flash,
     "grok": call_xai_grok,
     "deepseek": call_deepseek,
@@ -186,7 +186,7 @@ def run_council(
 
     Args:
         content: The text to evaluate.
-        roles: Dict of {role_name: {"model": "haiku|gemini|grok|deepseek",
+        roles: Dict of {role_name: {"model": "bedrock|gemini|grok|deepseek",
                                      "system": "system prompt",
                                      "prompt": "evaluation prompt"}}.
         threshold: Average score required to pass (default 7.5).
@@ -275,7 +275,7 @@ if __name__ == "__main__":
 
     test_roles = {
         "editor": {
-            "model": "chatgpt",
+            "model": "bedrock",
             "system": "You are an editor evaluating prose quality.",
             "prompt": "Score this text for writing quality, clarity, and structure.",
         },

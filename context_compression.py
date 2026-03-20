@@ -15,7 +15,7 @@ COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"
 PRESERVE_RECENT_MESSAGES = int(os.environ.get("PRESERVE_RECENT_MESSAGES", "40"))
 TOOL_RESULT_FULL_WINDOW = 6  # Keep last N tool results verbatim
 TOOL_RESULT_SUMMARY_CHARS = 200  # Truncate older tool results to this
-SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-2.0-flash")
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-3.0-flash")
 
 
 def estimate_tokens(messages: list[dict]) -> int:

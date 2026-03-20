@@ -198,7 +198,7 @@ class GitAutoSyncObserver(Observer):
                     system_instruction=BEDROCK_SYSTEM,
                 )
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-3.0-flash",
                     contents=prompt,
                     config=config,
                 )
