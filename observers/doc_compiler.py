@@ -335,7 +335,7 @@ class DocCompilerObserver(Observer):
             system_instruction=system or SYSTEM_PROMPT,
         )
         response = client.models.generate_content(
-            model="gemini-3.0-flash",
+            model="gemini-3-flash-preview",
             contents=prompt,
             config=config,
         )

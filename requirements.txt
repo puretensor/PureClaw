@@ -30,3 +30,6 @@ python-pptx>=1.0.0
 pypdf>=4.0.0
 img2pdf>=0.5.0
 pandas>=2.0.0
+
+# Terminal WebSocket channel
+websockets>=13.0

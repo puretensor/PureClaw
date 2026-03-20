@@ -44,7 +44,7 @@ BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "64000"))
 BEDROCK_THINKING_BUDGET = int(os.environ.get("BEDROCK_THINKING_BUDGET", "0"))
 
 # Gemini API (primary cloud LLM)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "65536"))
 GEMINI_THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
 
@@ -101,6 +101,12 @@ WA_INSTANCES = os.environ.get("WA_INSTANCES", '[{"name": "wa-1", "url": "http://
 WA_ROUTING_CONFIG = os.environ.get("WA_ROUTING_CONFIG", "")
 WA_CHAT_ID_OFFSET = 800_000_000_000
 
+# Terminal WebSocket
+TERMINAL_WS_ENABLED = os.environ.get("TERMINAL_WS_ENABLED", "false").lower() in ("true", "1", "yes")
+TERMINAL_WS_PORT = int(os.environ.get("TERMINAL_WS_PORT", "9877"))
+TERMINAL_API_KEY = os.environ.get("TERMINAL_API_KEY", "")
+TERMINAL_CHAT_ID_OFFSET = 700_000_000_000
+
 # Agent identity — configurable name and personality
 AGENT_NAME = os.environ.get("AGENT_NAME", "PureClaw")
 AGENT_EMAIL = os.environ.get("AGENT_EMAIL", "")  # agent's own email (self-ignore in email channel)
@@ -139,7 +145,7 @@ SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT", "180"))
 # Context compression
 COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"))
 PRESERVE_RECENT_MESSAGES = int(os.environ.get("PRESERVE_RECENT_MESSAGES", "40"))
-SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-3.0-flash")
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-3-flash-preview")
 
 # Security policy
 SECURITY_POLICY_PATH = os.environ.get("SECURITY_POLICY_PATH", "")

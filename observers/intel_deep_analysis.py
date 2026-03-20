@@ -573,7 +573,7 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
                 num_predict=8192,
                 temperature=0.4,
                 preferred_backend="gemini",
-                override_gemini_model="gemini-3.0-flash",
+                override_gemini_model="gemini-3-flash-preview",
             )
         except Exception as e:
             log.error("intel_deep_analysis: article generation failed (%s): %s", brand, e)
@@ -905,7 +905,7 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
                 system_prompt="Write 2-3 sentence intelligence teasers. Never exceed 60 words.",
                 user_prompt=prompt, timeout=60, num_predict=150,
                 temperature=0.3, preferred_backend="gemini",
-                override_gemini_model="gemini-3.0-flash",
+                override_gemini_model="gemini-3-flash-preview",
             )
             # Hard truncate: max 3 sentences, max 300 chars
             text = summary.strip().replace("\n", " ").replace("  ", " ")

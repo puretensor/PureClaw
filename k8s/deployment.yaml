@@ -157,6 +157,8 @@ spec:
           ports:
             - containerPort: 9876
               name: webhook
+            - containerPort: 9877
+              name: terminal-ws
           envFrom:
             - secretRef:
                 name: nexus-env
