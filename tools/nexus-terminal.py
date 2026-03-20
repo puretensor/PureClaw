@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""PureClaw Code — terminal interface to PureClaw over WebSocket.
+"""PureClaw Cli — terminal interface to PureClaw over WebSocket.
 
-Lightweight single-file client. Depends on `websockets` (pip install websockets).
-Optional: `prompt_toolkit` for slash command autocomplete (pip install prompt_toolkit).
+Lightweight single-file client for the PureClaw agent platform. Connects to a
+Nexus server over WebSocket and provides a streaming terminal interface with
+slash command autocomplete, model switching, and live train departures.
 
-Config: ~/.config/puretensor/nexus_terminal.conf (JSON)
-    {"host": "100.103.248.9", "port": 30879, "token": "YOUR_TOKEN"}
+Dependencies:
+    pip install websockets
+    pip install prompt_toolkit  # optional, for slash command autocomplete
+
+Config: ~/.config/pureclaw/cli.conf (JSON)
+    {"host": "localhost", "port": 9877, "token": "YOUR_TOKEN"}
 
 Usage:
-    python3 nexus-terminal.py
-    alias nex='python3 ~/nexus/tools/nexus-terminal.py'
+    python3 pureclaw-cli.py
+    NEXUS_HOST=myhost NEXUS_PORT=9877 NEXUS_TOKEN=xyz python3 pureclaw-cli.py
 """
 
 import asyncio
@@ -29,6 +34,7 @@ try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import ANSI as PTK_ANSI
+    from prompt_toolkit.patch_stdout import patch_stdout as ptk_patch_stdout
     HAS_PROMPT_TOOLKIT = True
 except ImportError:
     HAS_PROMPT_TOOLKIT = False
@@ -37,9 +43,9 @@ except ImportError:
 # Configuration
 # ---------------------------------------------------------------------------
 
-VERSION = "1.0.0"
+VERSION = "1.2.5"
 CONFIG_PATH = Path.home() / ".config" / "puretensor" / "nexus_terminal.conf"
-DEFAULT_HOST = "100.103.248.9"  # fox-n1 Tailscale
+DEFAULT_HOST = "100.103.248.9"
 DEFAULT_PORT = 30879
 
 
@@ -100,14 +106,14 @@ def _model_label(backend: str, model: str) -> str:
 # Startup banner
 # ---------------------------------------------------------------------------
 
-LOGO = r"""
-    /\___/\
-   ( o   o )
-   (  =^=  )
-    )     (
-   (  |||  )
-  ( ||| ||| )
-"""
+LOGO_LINES = [
+    f"    /\\___/\\ ",
+    f"   ( {RED}o{RESET}{WHITE}   {RED}o{RESET}{WHITE} )",
+    f"   (  =^=  )",
+    f"    )     ( ",
+    f"   (  |||  )",
+    f"  ( ||| ||| )",
+]
 
 def print_banner(backend: str = "vllm", model: str = "sonnet", server_version: str = ""):
     """Print branded startup banner like Claude Code."""
@@ -116,21 +122,25 @@ def print_banner(backend: str = "vllm", model: str = "sonnet", server_version: s
     w = _term_width()
 
     # Logo + title side by side
-    logo_lines = [l for l in LOGO.split("\n") if l.strip()]
+    logo_lines = LOGO_LINES
     title_lines = [
-        f"{BOLD}{CYAN}PureClaw Code{RESET} {DIM}v{ver}{RESET}",
+        f"{BOLD}{CYAN}PureClaw Cli{RESET} {DIM}v{ver}{RESET}",
         f"{model_text}",
-        f"{DIM}/home/puretensorai{RESET}",
+        f"{DIM}{Path.home()}{RESET}",
     ]
 
     # Print logo lines with title alongside
-    max_logo_w = max(len(l) for l in logo_lines) if logo_lines else 0
+    # Strip ANSI for width calculation
+    import re
+    _ansi_re = re.compile(r'\033\[[0-9;]*m')
+    max_logo_w = max(len(_ansi_re.sub('', l)) for l in logo_lines) if logo_lines else 0
     for i, logo_line in enumerate(logo_lines):
-        padded = logo_line.ljust(max_logo_w)
+        visible_len = len(_ansi_re.sub('', logo_line))
+        pad = ' ' * (max_logo_w - visible_len)
         if i < len(title_lines):
-            print(f"  {MAGENTA}{padded}{RESET}  {title_lines[i]}")
+            print(f"  {WHITE}{logo_line}{pad}{RESET}  {title_lines[i]}")
         else:
-            print(f"  {MAGENTA}{padded}{RESET}")
+            print(f"  {WHITE}{logo_line}{pad}{RESET}")
 
     # Print any remaining title lines
     for i in range(len(logo_lines), len(title_lines)):
@@ -235,22 +245,17 @@ class NexusTerminal:
                 etype = event.get("type", "")
 
                 if etype == "text_delta":
-                    if self._last_tool_status:
-                        sys.stdout.write(CLEAR_LINE)
-                        self._last_tool_status = ""
+                    self._last_tool_status = ""
                     sys.stdout.write(event.get("text", ""))
                     sys.stdout.flush()
 
                 elif etype == "tool_status":
                     status = event.get("status", "")
                     self._last_tool_status = status
-                    sys.stdout.write(f"{CLEAR_LINE}{DIM}{ITALIC}{status}{RESET}")
-                    sys.stdout.flush()
+                    print(f"  {DIM}{ITALIC}{status}{RESET}")
 
                 elif etype == "stream_end":
-                    if self._last_tool_status:
-                        sys.stdout.write(CLEAR_LINE)
-                        self._last_tool_status = ""
+                    self._last_tool_status = ""
                     self._streaming = False
                     self._print_separator()
 
@@ -292,6 +297,39 @@ class NexusTerminal:
                 print(f"{RED}\nConnection lost during streaming{RESET}")
             raise
 
+    async def _prompt_loop(self, pt_session, prompt_str):
+        """Inner prompt loop — runs inside patch_stdout context."""
+        while True:
+            try:
+                line = await pt_session.prompt_async(PTK_ANSI(prompt_str))
+            except EOFError:
+                return
+            except KeyboardInterrupt:
+                if self._streaming:
+                    print(f"\n{DIM}(interrupt){RESET}")
+                    continue
+                return
+
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("/"):
+                parts = line[1:].split(None, 1)
+                cmd = parts[0].lower() if parts else ""
+                args = parts[1] if len(parts) > 1 else ""
+
+                if cmd in ("quit", "exit"):
+                    return
+
+                await self.send_command(cmd, args)
+                while self._command_pending:
+                    await asyncio.sleep(0.05)
+            else:
+                await self.send_message(line)
+                while self._streaming:
+                    await asyncio.sleep(0.05)
+
     async def input_loop(self):
         """Read user input and send to server."""
         prompt_str = f"{BOLD}{GREEN}\u276f{RESET} "
@@ -301,42 +339,42 @@ class NexusTerminal:
                 completer=SlashCompleter(),
                 complete_while_typing=True,
             )
-
-        while True:
-            try:
-                if HAS_PROMPT_TOOLKIT:
-                    line = await pt_session.prompt_async(PTK_ANSI(prompt_str))
-                else:
+            # patch_stdout keeps the prompt fixed at the bottom —
+            # all stdout writes from the receive_loop scroll above it
+            with ptk_patch_stdout(raw=True):
+                await self._prompt_loop(pt_session, prompt_str)
+        else:
+            while True:
+                try:
                     loop = asyncio.get_event_loop()
                     line = await loop.run_in_executor(None, lambda: input(prompt_str))
-            except EOFError:
-                break
-            except KeyboardInterrupt:
-                if self._streaming:
-                    print(f"\n{DIM}(interrupt){RESET}")
-                    continue
-                break
-
-            line = line.strip()
-            if not line:
-                continue
-
-            # Parse commands
-            if line.startswith("/"):
-                parts = line[1:].split(None, 1)
-                cmd = parts[0].lower() if parts else ""
-                args = parts[1] if len(parts) > 1 else ""
-
-                if cmd in ("quit", "exit"):
+                except EOFError:
+                    break
+                except KeyboardInterrupt:
+                    if self._streaming:
+                        print(f"\n{DIM}(interrupt){RESET}")
+                        continue
                     break
 
-                await self.send_command(cmd, args)
-                while self._command_pending:
-                    await asyncio.sleep(0.05)
-            else:
-                await self.send_message(line)
-                while self._streaming:
-                    await asyncio.sleep(0.05)
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("/"):
+                    parts = line[1:].split(None, 1)
+                    cmd = parts[0].lower() if parts else ""
+                    args = parts[1] if len(parts) > 1 else ""
+
+                    if cmd in ("quit", "exit"):
+                        break
+
+                    await self.send_command(cmd, args)
+                    while self._command_pending:
+                        await asyncio.sleep(0.05)
+                else:
+                    await self.send_message(line)
+                    while self._streaming:
+                        await asyncio.sleep(0.05)
 
     async def run(self):
         """Main loop with auto-reconnect."""

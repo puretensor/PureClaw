@@ -980,7 +980,7 @@ _SUBAGENT_TIMEOUT = int(os.environ.get("SUBAGENT_TIMEOUT", "180"))
 
 
 def _exec_spawn_subagent(args: dict, **_kwargs) -> tuple[str, list[str]]:
-    """Spawn a subagent with its own Bedrock conversation."""
+    """Spawn a subagent with its own conversation via configured backend."""
     task = args.get("task", "").strip()
     if not task:
         return "Error: no task provided", []
@@ -1002,10 +1002,15 @@ def _exec_spawn_subagent(args: dict, **_kwargs) -> tuple[str, list[str]]:
 
 
 def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
-    """Run a subagent conversation synchronously via Bedrock."""
-    from backends.bedrock_api import BedrockAPIBackend
+    """Run a subagent conversation synchronously via configured backend."""
+    from config import SUBAGENT_BACKEND
 
-    backend = BedrockAPIBackend()
+    if SUBAGENT_BACKEND == "bedrock_api":
+        from backends.bedrock_api import BedrockAPIBackend
+        backend = BedrockAPIBackend()
+    else:
+        from backends.vllm import VLLMBackend
+        backend = VLLMBackend()
 
     # Filter tool schemas — exclude spawn_subagent to prevent nesting
     allowed = set(tool_names)
@@ -1019,41 +1024,46 @@ def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
         "You cannot spawn further subagents. When done, provide your final answer as text."
     )
 
+    # Inject full memory context — subagents need fleet topology, IPs, credentials
+    memory_ctx = None
+    try:
+        from memory import get_memories_for_injection
+        memory_ctx = get_memories_for_injection() or None
+    except Exception:
+        pass
+
     # Mark thread as subagent context
     _tool_context.is_subagent = True
 
     try:
-        # Override backend tools with filtered set
-        from backends.bedrock_api import _bedrock_tools as _orig_bedrock_tools
-        filtered_bedrock_tools = []
-        for t in filtered_schemas:
-            fn = t.get("function", {})
-            params = fn.get("parameters", {"type": "object", "properties": {}})
-            filtered_bedrock_tools.append({
-                "toolSpec": {
-                    "name": fn.get("name", ""),
-                    "description": fn.get("description", ""),
-                    "inputSchema": {"json": params},
-                }
-            })
+        if SUBAGENT_BACKEND == "bedrock_api":
+            # Bedrock needs toolSpec format conversion
+            filtered_bedrock_tools = []
+            for t in filtered_schemas:
+                fn = t.get("function", {})
+                params = fn.get("parameters", {"type": "object", "properties": {}})
+                filtered_bedrock_tools.append({
+                    "toolSpec": {
+                        "name": fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                        "inputSchema": {"json": params},
+                    }
+                })
+            backend._tools = filtered_bedrock_tools if filtered_bedrock_tools else None
+            backend._tools_enabled = bool(filtered_bedrock_tools)
+        else:
+            # vLLM uses OpenAI format directly — no conversion needed
+            backend._tools = filtered_schemas if filtered_schemas else None
+            backend._tools_enabled = bool(filtered_schemas)
 
-        # Temporarily swap tools on the backend
-        original_tools = backend._tools
-        original_enabled = backend._tools_enabled
-        backend._tools = filtered_bedrock_tools if filtered_bedrock_tools else None
-        backend._tools_enabled = bool(filtered_bedrock_tools)
-
-        try:
-            result = backend.call_sync(
-                prompt=task,
-                model=model or "sonnet",
-                system_prompt=system_prompt,
-                timeout=_SUBAGENT_TIMEOUT,
-            )
-            return result.get("result", "(no result)")
-        finally:
-            backend._tools = original_tools
-            backend._tools_enabled = original_enabled
+        result = backend.call_sync(
+            prompt=task,
+            model=model or "default",
+            system_prompt=system_prompt,
+            memory_context=memory_ctx,
+            timeout=_SUBAGENT_TIMEOUT,
+        )
+        return result.get("result", "(no result)")
     finally:
         _tool_context.is_subagent = False
 
