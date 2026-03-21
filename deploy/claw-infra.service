@@ -1,0 +1,22 @@
+[Unit]
+Description=Claw-Infra — PureClaw Infrastructure Agent (tensor-core)
+After=network-online.target vllm-nemotron.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=puretensorai
+Group=puretensorai
+WorkingDirectory=/home/puretensorai/nexus
+ExecStart=/usr/bin/python3 -m mesh.runner
+Restart=always
+RestartSec=15
+EnvironmentFile=/home/puretensorai/nexus/deploy/claw-infra.env
+
+Environment=HOME=/home/puretensorai
+Environment=PATH=/home/puretensorai/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

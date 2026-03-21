@@ -43,6 +43,17 @@ FAILOVER_BACKEND = os.environ.get("FAILOVER_BACKEND", "bedrock_api")
 BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "64000"))
 BEDROCK_THINKING_BUDGET = int(os.environ.get("BEDROCK_THINKING_BUDGET", "0"))
 
+# Multi-level failover chain (comma-separated: "vllm:http://10.200.0.3:5000/v1,bedrock_api,gemini_api")
+FAILOVER_CHAIN = os.environ.get("FAILOVER_CHAIN", "")
+FAILOVER_HEALTH_TIMEOUT = float(os.environ.get("FAILOVER_HEALTH_TIMEOUT", "2.0"))
+VLLM_FALLBACK_URL = os.environ.get("VLLM_FALLBACK_URL", "")
+
+# Claw mesh — distributed agent configuration
+CLAW_ID = os.environ.get("CLAW_ID", "prime")
+CLAW_PORT = int(os.environ.get("CLAW_PORT", "9880"))
+CLAW_MESH_PEERS = os.environ.get("CLAW_MESH_PEERS", "{}")
+CLAW_AUTHORITY_LEVEL = os.environ.get("CLAW_AUTHORITY_LEVEL", "full")
+
 # Gemini API (primary cloud LLM)
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "65536"))

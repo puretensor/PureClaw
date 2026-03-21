@@ -342,6 +342,43 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "claw_dispatch",
+            "description": (
+                "Send a task or query to a specialist Claw agent in the PureClaw mesh. "
+                "Each Claw is a domain expert running on a specific fleet node. "
+                "Available Claws: "
+                "infra (tensor-core — GPU, network, IPMI, services), "
+                "ops (fox-n0 — Ceph, storage, backups, data transfers), "
+                "sentinel (mon2 — alert triage, monitoring). "
+                "Use wait=true for synchronous response, wait=false for fire-and-forget."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "claw": {
+                        "type": "string",
+                        "description": "Target Claw ID: 'infra', 'ops', or 'sentinel'",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "The task or query to send. Be specific.",
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "description": "0=routine, 1=normal (default), 2=high, 3=critical",
+                    },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "Wait for response (true, default) or fire-and-forget (false)",
+                    },
+                },
+                "required": ["claw", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "spawn_subagent",
             "description": (
                 "Spawn a parallel subagent to handle a focused subtask. The subagent "
@@ -881,6 +918,53 @@ def _exec_einherjar_dispatch(args: dict, **_kwargs) -> tuple[str, list[str]]:
     return _truncate("\n".join(lines)), []
 
 
+def _exec_claw_dispatch(args: dict, **_kwargs) -> tuple[str, list[str]]:
+    """Dispatch a task or query to a specialist Claw in the mesh."""
+    claw_id = args.get("claw", "").strip()
+    task = args.get("task", "").strip()
+    priority = args.get("priority", 1)
+    wait = args.get("wait", True)
+
+    if not claw_id:
+        return "Error: no claw specified", []
+    if not task:
+        return "Error: no task provided", []
+
+    log.info("Tool claw_dispatch: claw=%s priority=%d task=%s", claw_id, priority, task[:80])
+
+    try:
+        from mesh.registry import ClawRegistry
+        from mesh.client import ClawClient
+        from config import CLAW_MESH_PEERS, CLAW_ID
+
+        registry = ClawRegistry(CLAW_MESH_PEERS, CLAW_ID)
+        client = ClawClient(registry, CLAW_ID)
+
+        result = client.send(
+            to_claw=claw_id,
+            msg_type="task",
+            payload={"task": task},
+            priority=priority,
+            timeout=120 if wait else 10,
+            wait=wait,
+        )
+    except Exception as e:
+        return f"Error dispatching to Claw-{claw_id}: {e}", []
+
+    if result.get("error"):
+        return f"Claw-{claw_id} error: {result['error']}", []
+
+    response = result.get("result", {}).get("response", "")
+    if not response:
+        response = json.dumps(result, indent=2)
+
+    lines = [f"[CLAW/{claw_id.upper()}]"]
+    lines.append("")
+    lines.append(response)
+
+    return _truncate("\n".join(lines)), []
+
+
 def _exec_make_phone_call(args: dict, **_kwargs) -> tuple[str, list[str]]:
     """Make an outbound phone call via the phone service."""
     phone_number = args.get("phone_number", "").strip()
@@ -1234,6 +1318,7 @@ _EXECUTORS = {
     "web_fetch": _exec_web_fetch,
     "make_phone_call": _exec_make_phone_call,
     "einherjar_dispatch": _exec_einherjar_dispatch,
+    "claw_dispatch": _exec_claw_dispatch,
     "enter_plan_mode": _exec_enter_plan_mode,
     "exit_plan_mode": _exec_exit_plan_mode,
     "spawn_subagent": _exec_spawn_subagent,
@@ -1407,6 +1492,10 @@ def _format_tool_status(tool_name: str, tool_input: dict) -> str:
         agent = tool_input.get("agent") or "auto"
         task = tool_input.get("task", "?")[:60]
         return f"EINHERJAR [{agent}]: {task}"
+    elif tool_name == "claw_dispatch":
+        claw = tool_input.get("claw", "?")
+        task = tool_input.get("task", "?")[:60]
+        return f"CLAW [{claw}]: {task}"
     elif tool_name == "enter_plan_mode":
         return f"Planning: {tool_input.get('reason', '?')}"
     elif tool_name == "exit_plan_mode":
