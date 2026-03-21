@@ -1,0 +1,18 @@
+[Unit]
+Description=Claw-Ops — PureClaw Storage Operations Agent (fox-n0)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/claw-ops
+ExecStart=/usr/bin/python3 -m mesh.runner
+Restart=always
+RestartSec=15
+EnvironmentFile=/opt/claw-ops/deploy/claw-ops.env
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

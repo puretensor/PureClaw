@@ -1,0 +1,18 @@
+[Unit]
+Description=Claw-Sentinel — PureClaw Alert Triage Agent (mon2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/claw-sentinel
+ExecStart=/usr/bin/python3 -m mesh.runner
+Restart=always
+RestartSec=15
+EnvironmentFile=/opt/claw-sentinel/deploy/claw-sentinel.env
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

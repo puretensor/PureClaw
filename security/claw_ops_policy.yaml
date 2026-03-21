@@ -1,0 +1,62 @@
+# Claw-Ops Security Policy — fox-n0 storage/compute specialist
+# Bash restricted to storage operations, no file writes.
+
+version: 1
+
+filesystem:
+  read_allow:
+    - "/**"
+  read_deny:
+    - "/etc/shadow"
+    - "/etc/gshadow"
+    - "**/.env"
+    - "**/*credential*"
+    - "**/*password*"
+  write_allow: []
+  write_deny:
+    - "/**"
+
+network:
+  fetch_allow_domains:
+    - "192.168.4.*"
+    - "100.*"
+    - "10.200.0.*"
+    - "127.0.0.1"
+    - "localhost"
+  fetch_deny_domains:
+    - "*"
+  block_private_ranges: false
+
+tools:
+  allowed:
+    - "bash"
+    - "read_file"
+    - "glob"
+    - "grep"
+    - "web_fetch"
+  denied:
+    - "web_search"
+    - "write_file"
+    - "edit_file"
+    - "spawn_subagent"
+
+inference:
+  model_allowlist:
+    - "*"
+  max_tokens_per_session: 0
+  system_prompt_immutable: true
+
+credentials:
+  redact_patterns:
+    - "sk-ant-[a-zA-Z0-9_-]{20,}"
+    - "sk-[a-zA-Z0-9_-]{20,}"
+    - "AIza[a-zA-Z0-9_-]{30,}"
+  redact_env_vars:
+    - "TELEGRAM_BOT_TOKEN"
+    - "ALERT_BOT_TOKEN"
+
+audit:
+  enabled: true
+  log_tool_args: true
+  log_result_preview: true
+  retention_days: 90

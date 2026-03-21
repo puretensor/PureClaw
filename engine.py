@@ -192,39 +192,132 @@ async def _read_stream(proc, on_progress=None, streaming_editor=None) -> dict:
 # Public API — delegates to configured backend with automatic failover
 # ---------------------------------------------------------------------------
 
-_failover_backend = None
+_failover_chain: list | None = None
+
+_CHAIN_REGISTRY = {
+    "bedrock_api": ("backends.bedrock_api", "BedrockAPIBackend"),
+    "anthropic_api": ("backends.anthropic_api", "AnthropicAPIBackend"),
+    "gemini_api": ("backends.gemini_api", "GeminiAPIBackend"),
+    "vllm": ("backends.vllm", "VLLMBackend"),
+}
 
 
-def _get_failover_backend():
-    """Lazy-init the failover backend (Bedrock Sonnet 4.6)."""
-    global _failover_backend
-    if _failover_backend is not None:
-        return _failover_backend
+def _health_check_url(url: str, timeout: float = 2.0) -> bool:
+    """Quick HTTP connectivity check. Returns True if reachable."""
+    import urllib.request
+    try:
+        base = url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        req = urllib.request.Request(base + "/health", method="GET")
+        urllib.request.urlopen(req, timeout=timeout)
+        return True
+    except Exception:
+        return False
 
-    from config import FAILOVER_ENABLED, FAILOVER_BACKEND
+
+async def _health_check_url_async(url: str, timeout: float = 2.0) -> bool:
+    """Async HTTP connectivity check."""
+    import aiohttp
+    try:
+        base = url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                base + "/health",
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ):
+                return True
+    except Exception:
+        return False
+
+
+def _get_failover_chain() -> list:
+    """Build and cache the ordered failover chain.
+
+    Returns list of dicts: {backend_name, url_override, instance}.
+    Supports FAILOVER_CHAIN env (new) or FAILOVER_BACKEND (legacy).
+    """
+    global _failover_chain
+    if _failover_chain is not None:
+        return _failover_chain
+
+    from config import (
+        FAILOVER_ENABLED, FAILOVER_BACKEND, FAILOVER_CHAIN,
+        VLLM_FALLBACK_URL, ENGINE_BACKEND,
+    )
+
     if not FAILOVER_ENABLED:
+        _failover_chain = []
+        return _failover_chain
+
+    chain_specs = []
+
+    if FAILOVER_CHAIN:
+        # New format: "vllm:http://10.200.0.3:5000/v1,bedrock_api,gemini_api"
+        for spec in FAILOVER_CHAIN.split(","):
+            spec = spec.strip()
+            if not spec:
+                continue
+            if ":" in spec and not spec.startswith("http"):
+                name, url = spec.split(":", 1)
+                chain_specs.append({"backend_name": name.strip(), "url_override": url.strip(), "instance": None})
+            else:
+                chain_specs.append({"backend_name": spec, "url_override": None, "instance": None})
+    else:
+        # Legacy: single FAILOVER_BACKEND. Inject VLLM_FALLBACK_URL before it if applicable.
+        if ENGINE_BACKEND == "vllm" and VLLM_FALLBACK_URL:
+            chain_specs.append({"backend_name": "vllm", "url_override": VLLM_FALLBACK_URL, "instance": None})
+        if FAILOVER_BACKEND:
+            chain_specs.append({"backend_name": FAILOVER_BACKEND, "url_override": None, "instance": None})
+
+    _failover_chain = chain_specs
+    if chain_specs:
+        chain_desc = " -> ".join(
+            f"{s['backend_name']}({s['url_override']})" if s["url_override"] else s["backend_name"]
+            for s in chain_specs
+        )
+        log.info("Failover chain: %s", chain_desc)
+    return _failover_chain
+
+
+def _get_chain_backend(spec: dict):
+    """Lazy-initialize a backend instance for a failover chain entry."""
+    if spec["instance"] is not None:
+        return spec["instance"]
+
+    import importlib
+
+    name = spec["backend_name"]
+    if name not in _CHAIN_REGISTRY:
+        log.warning("Unknown failover backend in chain: %s", name)
         return None
 
     try:
-        import importlib
-        _FAILOVER_REGISTRY = {
-            "bedrock_api": ("backends.bedrock_api", "BedrockAPIBackend"),
-            "anthropic_api": ("backends.anthropic_api", "AnthropicAPIBackend"),
-            "gemini_api": ("backends.gemini_api", "GeminiAPIBackend"),
-        }
-        if FAILOVER_BACKEND not in _FAILOVER_REGISTRY:
-            log.warning("Unknown FAILOVER_BACKEND: %s", FAILOVER_BACKEND)
-            return None
-        module_path, class_name = _FAILOVER_REGISTRY[FAILOVER_BACKEND]
+        module_path, class_name = _CHAIN_REGISTRY[name]
         mod = importlib.import_module(module_path)
         cls = getattr(mod, class_name)
-        _failover_backend = cls()
-        log.info("Failover backend initialized: %s", _failover_backend.name)
+        instance = cls()
+
+        # Apply URL override for vLLM backends pointing to alternate endpoints
+        if spec["url_override"] and name == "vllm":
+            from openai import OpenAI, AsyncOpenAI
+            instance._url = spec["url_override"]
+            instance._client = OpenAI(base_url=spec["url_override"], api_key="dummy")
+            instance._aclient = AsyncOpenAI(base_url=spec["url_override"], api_key="dummy")
+
+        spec["instance"] = instance
+        log.info(
+            "Failover chain backend initialized: %s%s",
+            instance.name,
+            f" (url={spec['url_override']})" if spec["url_override"] else "",
+        )
     except Exception as e:
-        log.warning("Failed to initialize failover backend: %s", e)
+        log.warning("Failed to initialize failover chain backend %s: %s", name, e)
         return None
 
-    return _failover_backend
+    return spec["instance"]
 
 
 def get_model_display(model: str = CLAUDE_MODEL) -> str:
@@ -270,31 +363,47 @@ def call_sync(
             raise RuntimeError(result.get("result", "Backend returned error"))
     except Exception as primary_err:
         log.error("Primary backend (%s) failed: %s", backend.name, primary_err)
-        failover = _get_failover_backend()
-        if failover and failover.name != backend.name:
-            log.info("Failing over to %s (sonnet)", failover.name)
+
+        from config import FAILOVER_HEALTH_TIMEOUT
+        chain = _get_failover_chain()
+
+        for i, spec in enumerate(chain):
+            fb = _get_chain_backend(spec)
+            if fb is None:
+                continue
+
+            # Health-check preflight for URL-based backends
+            url_to_check = spec.get("url_override") or getattr(fb, "_url", None)
+            if url_to_check:
+                if not _health_check_url(url_to_check, FAILOVER_HEALTH_TIMEOUT):
+                    log.info("Failover[%d] %s health check failed, skipping", i, spec["backend_name"])
+                    continue
+
+            fb_model = model if spec["backend_name"] == "vllm" else "sonnet"
+            log.info("Failing over to chain[%d]: %s (model=%s)", i, fb.name, fb_model)
             try:
-                result = failover.call_sync(
+                result = fb.call_sync(
                     prompt,
-                    model="sonnet",
-                    session_id=None,  # Fresh session on failover
+                    model=fb_model,
+                    session_id=None,
                     timeout=timeout,
                     system_prompt=SYSTEM_PROMPT,
                 )
                 result["_failover"] = True
-                result["_failover_backend"] = failover.name
+                result["_failover_backend"] = fb.name
+                result["_failover_chain_index"] = i
                 duration = int((_time.monotonic() - t0) * 1000)
                 try:
                     from security.audit import log_llm_call
-                    log_llm_call(None, None, failover.name, "sonnet", None, duration)
+                    log_llm_call(None, None, fb.name, fb_model, None, duration)
                 except Exception:
                     pass
                 return result
-            except Exception as failover_err:
-                log.error("Failover backend (%s) also failed: %s", failover.name, failover_err)
-                return {"result": f"Primary ({backend.name}) and failover ({failover.name}) both failed.", "session_id": session_id}
-        else:
-            return {"result": f"Error: {primary_err}", "session_id": session_id}
+            except Exception as chain_err:
+                log.error("Failover[%d] %s failed: %s", i, spec["backend_name"], chain_err)
+                continue
+
+        return {"result": f"All backends failed. Primary: {primary_err}", "session_id": session_id}
 
     duration = int((_time.monotonic() - t0) * 1000)
 
@@ -391,24 +500,41 @@ async def call_streaming(
         )
     except Exception as primary_err:
         log.error("Primary backend (%s) streaming failed: %s", backend.name, primary_err)
-        failover = _get_failover_backend()
-        if failover and failover.name != backend.name:
-            log.info("Failing over to %s (sonnet) for streaming", failover.name)
 
-            # Notify user of failover via streaming editor
+        from config import FAILOVER_HEALTH_TIMEOUT
+        chain = _get_failover_chain()
+
+        for i, spec in enumerate(chain):
+            fb = _get_chain_backend(spec)
+            if fb is None:
+                continue
+
+            # Async health-check preflight for URL-based backends
+            url_to_check = spec.get("url_override") or getattr(fb, "_url", None)
+            if url_to_check:
+                if not await _health_check_url_async(url_to_check, FAILOVER_HEALTH_TIMEOUT):
+                    log.info("Failover[%d] %s health check failed, skipping", i, spec["backend_name"])
+                    continue
+
+            # Notify user
             if streaming_editor:
                 try:
+                    fb_label = spec["backend_name"]
+                    if spec.get("url_override"):
+                        fb_label += " (200G)"
                     await streaming_editor.add_tool_status(
-                        f"Primary backend failed. Switching to Bedrock Sonnet..."
+                        f"Primary failed. Trying {fb_label}..."
                     )
                 except Exception:
                     pass
 
+            fb_model = model if spec["backend_name"] == "vllm" else "sonnet"
+            log.info("Failing over to chain[%d]: %s (model=%s)", i, fb.name, fb_model)
             try:
-                result = await failover.call_streaming(
+                result = await fb.call_streaming(
                     message,
-                    session_id=None,  # Fresh session on failover
-                    model="sonnet",
+                    session_id=None,
+                    model=fb_model,
                     on_progress=on_progress,
                     streaming_editor=streaming_editor,
                     system_prompt=SYSTEM_PROMPT,
@@ -416,23 +542,24 @@ async def call_streaming(
                     extra_system_prompt=extra_system_prompt,
                 )
                 result["_failover"] = True
-                result["_failover_backend"] = failover.name
+                result["_failover_backend"] = fb.name
+                result["_failover_chain_index"] = i
                 duration = int((_time.monotonic() - t0) * 1000)
                 try:
                     from security.audit import log_llm_call
-                    log_llm_call(None, None, failover.name, "sonnet", None, duration)
+                    log_llm_call(None, None, fb.name, fb_model, None, duration)
                 except Exception:
                     pass
                 return result
-            except Exception as failover_err:
-                log.error("Failover backend (%s) also failed: %s", failover.name, failover_err)
-                return {
-                    "result": f"Primary ({backend.name}) and failover ({failover.name}) both failed.",
-                    "session_id": session_id,
-                    "written_files": [],
-                }
-        else:
-            return {"result": f"Error: {primary_err}", "session_id": session_id, "written_files": []}
+            except Exception as chain_err:
+                log.error("Failover[%d] %s streaming failed: %s", i, spec["backend_name"], chain_err)
+                continue
+
+        return {
+            "result": f"All backends failed. Primary: {primary_err}",
+            "session_id": session_id,
+            "written_files": [],
+        }
 
     duration = int((_time.monotonic() - t0) * 1000)
 

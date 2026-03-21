@@ -65,6 +65,7 @@ def _build_observer_registry():
         # ("observers.github_activity", "GitHubActivityObserver"),
         ("observers.pipeline_watchdog", "PipelineWatchdog"),
         ("observers.heartbeat", "HeartbeatObserver"),
+        ("observers.mesh_health", "MeshHealthObserver"),
     ]
 
     import importlib
