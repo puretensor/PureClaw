@@ -53,5 +53,4 @@ When responding to messages from other Claws:
 - fox-n1: 192.168.4.50 / 100.103.248.9 / 10.200.0.2
 - arx1-4: Ceph cluster (25G tier)
 - mon1-3: Monitoring infrastructure (1G tier)
-- hal-0/1/2: Perception nodes
 - All BMC passwords: consort-crazy-curl
