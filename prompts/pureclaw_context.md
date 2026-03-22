@@ -23,9 +23,6 @@ All nodes reachable by hostname via SSH config. Use `ssh <hostname> '<command>'`
 • mon2 — Dell OptiPlex, i5-6500T. Grafana, Prometheus, Loki, Alertmanager.
 • mon3 — Raspberry Pi 5. Node exporter only. Often off.
 
-*Tier 4 — Perception (Supermicro 1U, Xeon E3, 32-64 GB DDR4)*
-• hal-0, hal-1, hal-2 — Perception nodes. Often powered off. Credentials from env.
-
 *GCP*
 • e2-micro — 12 static sites, nginx, certbot.
 • gcp-medium (gcp-medium) — WordPress: bretalon.com, nesdia.com.
@@ -141,7 +138,7 @@ ssh tensor-core '~/power/psleep-tier <0-4>'   # tier off
 ## Naming Conventions
 
 - Company: Set via system prompt and memory injection.
-- Nodes: lowercase with hyphens (tensor-core, fox-n0, arx1, hal-0, mon1).
+- Nodes: lowercase with hyphens (tensor-core, fox-n0, arx1, mon1).
 - Agent identity: set via AGENT_NAME env var.
 - Infrastructure codenames: ARK (storage), NEXUS (agent dispatcher).
 

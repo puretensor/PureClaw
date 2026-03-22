@@ -17,7 +17,6 @@ NODE_NAMES: dict[str, str] = _json.loads(os.environ.get("NODE_NAMES", "{}"))
 NODE_ORDER: list[str] = [
     "tensor-core", "fox-n0", "fox-n1",
     "arx1", "arx2", "arx3", "arx4",
-    "hal-0", "hal-1", "hal-2",
     "mon1", "mon2", "mon3",
 ]
 
