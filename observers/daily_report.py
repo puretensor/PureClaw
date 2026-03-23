@@ -537,30 +537,25 @@ Rules:
     )
 
     def _call_gemini(self, prompt: str, timeout: int = 180) -> str:
-        """Call Gemini 2.5 Flash for synthesis.
+        """Call Azure OpenAI GPT-5.1-chat for synthesis. Backward-compatible name."""
+        from openai import AzureOpenAI
 
-        Uses google-genai SDK. Returns the response text.
-        Raises on failure (missing key, API errors, etc.).
-        """
-        from google import genai
-        from google.genai import types
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+        if not api_key or not endpoint:
+            raise ValueError("AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT not set")
 
-        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            raise ValueError("Gemini: GOOGLE_API_KEY not set")
-
-        client = genai.Client(api_key=api_key)
-        config = types.GenerateContentConfig(
-            temperature=0.3,
-            max_output_tokens=8192,
-            system_instruction=self.SYSTEM_PROMPT,
+        client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
+        response = client.chat.completions.create(
+            model="gpt-5-1-chat",
+            messages=[
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_completion_tokens=8192,
         )
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
-            config=config,
-        )
-        return response.text or ""
+        return response.choices[0].message.content or ""
 
     def _call_openai_compat(self, prompt: str, provider: dict, timeout: int = 180) -> str:
         """Call an OpenAI-compatible API endpoint for synthesis.

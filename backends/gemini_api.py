@@ -1,10 +1,8 @@
-"""Google Gemini backend — via google-genai SDK with tool support.
+"""Azure OpenAI backend — via openai SDK with tool support.
 
-Uses GOOGLE_API_KEY from environment. Mirrors the BedrockAPIBackend interface:
-tool loop, history sanitization, streaming progress callbacks.
-
-Google Gemini API docs:
-  https://ai.google.dev/gemini-api/docs
+Uses AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT from environment.
+Mirrors the BedrockAPIBackend interface: tool loop, history sanitization,
+streaming progress callbacks.
 """
 
 from __future__ import annotations
@@ -12,10 +10,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 
-from google import genai
-from google.genai import types as gtypes
+from openai import AzureOpenAI
 
 from db import get_conversation_history, save_conversation_history
 from backends.anthropic_api import _sanitize_history, _build_system_blocks
@@ -23,40 +21,41 @@ from backends.tools import TOOL_SCHEMAS, ToolCall, run_tool_loop_sync, run_tool_
 
 log = logging.getLogger("nexus")
 
-# Model map — short names to Gemini model IDs
-_GEMINI_MODEL_MAP = {
-    "sonnet": "gemini-3-flash-preview",
-    "opus": "gemini-3.1-pro-preview",
-    "haiku": "gemini-3-flash-preview",
+# Model map — short names to Azure OpenAI deployment names
+_MODEL_MAP = {
+    "sonnet": "gpt-5-1-chat",
+    "opus": "gpt-5-1",
+    "haiku": "gpt-5-1-chat",
     # Legacy Bedrock IDs
-    "us.anthropic.claude-sonnet-4-6": "gemini-3-flash-preview",
-    "us.anthropic.claude-opus-4-6": "gemini-3.1-pro-preview",
-    "us.anthropic.claude-haiku-4-5-20251001": "gemini-3-flash-preview",
+    "us.anthropic.claude-sonnet-4-6": "gpt-5-1-chat",
+    "us.anthropic.claude-opus-4-6": "gpt-5-1",
+    "us.anthropic.claude-haiku-4-5-20251001": "gpt-5-1-chat",
 }
+
+# Vision model for image content
+_VISION_MODEL = "gpt-4o"
 
 # Pricing per million tokens (USD) for cost logging
 _PRICING = {
-    "gemini-3-flash-preview": (0.15, 0.60),
-    "gemini-3.1-pro-preview": (1.25, 10.0),
+    "gpt-5-1-chat": (2.00, 8.00),
+    "gpt-5-1": (10.00, 30.00),
+    "gpt-4o": (2.50, 10.00),
 }
 
 
-def _gemini_tools() -> list[gtypes.Tool]:
-    """Convert OpenAI-style tool schemas to Gemini Tool format."""
-    declarations = []
-    for t in TOOL_SCHEMAS:
-        fn = t.get("function", {})
-        params = fn.get("parameters", {"type": "object", "properties": {}})
-        declarations.append(gtypes.FunctionDeclaration(
-            name=fn.get("name", ""),
-            description=fn.get("description", ""),
-            parameters=params,
-        ))
-    return [gtypes.Tool(function_declarations=declarations)]
+def _openai_tools() -> list[dict]:
+    """Return tool schemas in OpenAI function-calling format.
+
+    TOOL_SCHEMAS are already in OpenAI format: {"type": "function", "function": {...}}.
+    """
+    return list(TOOL_SCHEMAS)
 
 
-def _convert_history_to_gemini(messages: list[dict]) -> list[gtypes.Content]:
-    """Convert Anthropic-format history to Gemini Content objects.
+def _convert_history_to_openai(
+    messages: list[dict],
+    system_text: str | None = None,
+) -> list[dict]:
+    """Convert Anthropic-format history to OpenAI chat messages.
 
     Anthropic uses:
       {"role": "user", "content": "text"} or
@@ -64,48 +63,56 @@ def _convert_history_to_gemini(messages: list[dict]) -> list[gtypes.Content]:
       {"role": "assistant", "content": [{"type": "text", ...}, {"type": "tool_use", ...}]}
       {"role": "user", "content": [{"type": "tool_result", ...}]}
 
-    Gemini uses:
-      Content(role="user", parts=[Part.from_text("...")])
-      Content(role="model", parts=[Part.from_text("..."), Part.from_function_call(...)])
-      Content(role="user", parts=[Part.from_function_response(...)])
-
-    Gemini requires strictly alternating user/model roles.
+    OpenAI uses:
+      {"role": "system", "content": "..."}
+      {"role": "user", "content": "..."}
+      {"role": "assistant", "content": "...", "tool_calls": [...]}
+      {"role": "tool", "tool_call_id": "...", "content": "..."}
     """
-    raw: list[gtypes.Content] = []
+    result: list[dict] = []
+
+    if system_text:
+        result.append({"role": "system", "content": system_text})
 
     for msg in messages:
-        role_raw = msg.get("role", "user")
-        role = "model" if role_raw == "assistant" else "user"
+        role = msg.get("role", "user")
         content = msg.get("content")
 
+        # Simple string content
         if isinstance(content, str):
-            raw.append(gtypes.Content(role=role, parts=[gtypes.Part.from_text(content)]))
+            result.append({"role": role, "content": content})
             continue
 
         if not isinstance(content, list):
-            raw.append(gtypes.Content(role=role, parts=[gtypes.Part.from_text(str(content))]))
+            result.append({"role": role, "content": str(content)})
             continue
 
-        parts: list[gtypes.Part] = []
+        # Complex content blocks — need to decompose
+        text_parts: list[str] = []
+        tool_calls_out: list[dict] = []
+        tool_results: list[dict] = []
+
         for block in content:
             if isinstance(block, str):
-                parts.append(gtypes.Part.from_text(block))
+                text_parts.append(block)
             elif not isinstance(block, dict):
                 continue
             elif block.get("type") == "text":
                 text = block.get("text", "")
                 if text:
-                    parts.append(gtypes.Part.from_text(text))
+                    text_parts.append(text)
             elif block.get("type") == "thinking":
-                # Thinking blocks — include as text for context
-                thinking = block.get("thinking", "")
-                if thinking:
-                    parts.append(gtypes.Part.from_text(f"[thinking]: {thinking[:500]}"))
+                # Skip thinking blocks — OpenAI doesn't have an equivalent
+                pass
             elif block.get("type") == "tool_use":
-                parts.append(gtypes.Part.from_function_call(
-                    name=block.get("name", ""),
-                    args=block.get("input", {}),
-                ))
+                tool_calls_out.append({
+                    "id": block.get("id", f"call_{uuid.uuid4().hex[:24]}"),
+                    "type": "function",
+                    "function": {
+                        "name": block.get("name", ""),
+                        "arguments": json.dumps(block.get("input", {})),
+                    },
+                })
             elif block.get("type") == "tool_result":
                 result_content = block.get("content", "")
                 if isinstance(result_content, str):
@@ -117,58 +124,60 @@ def _convert_history_to_gemini(messages: list[dict]) -> list[gtypes.Content]:
                     )
                 else:
                     result_text = str(result_content)
-                # tool_result needs to be a function_response — we need the tool name
-                # The tool_use_id doesn't map to Gemini, so we use a generic name
-                tool_name = block.get("_tool_name", "tool")
-                parts.append(gtypes.Part.from_function_response(
-                    name=tool_name,
-                    response={"result": result_text[:8000]},
-                ))
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": block.get("tool_use_id", ""),
+                    "content": result_text[:8000],
+                })
 
-        if parts:
-            raw.append(gtypes.Content(role=role, parts=parts))
-
-    # Merge consecutive same-role messages (Gemini requires alternating roles)
-    merged: list[gtypes.Content] = []
-    for content in raw:
-        if merged and merged[-1].role == content.role:
-            merged[-1].parts.extend(content.parts)
+        # Emit assistant message with optional tool_calls
+        if role == "assistant":
+            assistant_msg: dict = {"role": "assistant"}
+            combined_text = "\n".join(text_parts).strip()
+            assistant_msg["content"] = combined_text or None
+            if tool_calls_out:
+                assistant_msg["tool_calls"] = tool_calls_out
+            result.append(assistant_msg)
+        elif tool_results:
+            # tool_result blocks come as role=user in Anthropic format
+            # but need to be role=tool in OpenAI format
+            result.extend(tool_results)
         else:
-            merged.append(content)
+            combined_text = "\n".join(text_parts).strip()
+            if combined_text:
+                result.append({"role": role, "content": combined_text})
 
-    # Ensure conversation starts with user and alternates
-    if merged and merged[0].role == "model":
-        merged.insert(0, gtypes.Content(role="user", parts=[gtypes.Part.from_text("(continue)")]))
-
-    return merged
+    return result
 
 
-def _log_gemini_usage(usage_metadata, model_id: str, label: str = "") -> None:
-    """Log token usage and estimated cost from Gemini response."""
-    if not usage_metadata:
+def _log_usage(usage, model_id: str, label: str = "") -> None:
+    """Log token usage and estimated cost from OpenAI response."""
+    if not usage:
         return
 
-    input_tokens = getattr(usage_metadata, "prompt_token_count", 0) or 0
-    output_tokens = getattr(usage_metadata, "candidates_token_count", 0) or 0
+    input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    output_tokens = getattr(usage, "completion_tokens", 0) or 0
 
     prefix = f"[{label}] " if label else ""
 
-    input_price, output_price = _PRICING.get(model_id, (0.15, 0.60))
+    input_price, output_price = _PRICING.get(model_id, (2.00, 8.00))
     cost_in = input_tokens * input_price / 1_000_000
     cost_out = output_tokens * output_price / 1_000_000
     total_cost = cost_in + cost_out
 
     log.info(
-        "%sGemini usage: in=%d out=%d cost=$%.4f",
+        "%sAzure OpenAI usage: in=%d out=%d cost=$%.4f",
         prefix, input_tokens, output_tokens, total_cost,
     )
 
 
 class GeminiAPIBackend:
-    """Backend that calls Gemini via google-genai SDK with tool loop."""
+    """Backend that calls Azure OpenAI with tool loop.
+
+    Class name kept as GeminiAPIBackend for caller compatibility.
+    """
 
     def __init__(self):
-        import os
         from config import (
             ANTHROPIC_TOOLS_ENABLED,
             ANTHROPIC_TOOL_MAX_ITER,
@@ -177,25 +186,31 @@ class GeminiAPIBackend:
             CLAUDE_CWD,
         )
 
-        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY / GEMINI_API_KEY not set")
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
-        self._client = genai.Client(api_key=api_key)
-        self._default_model = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
-        self._max_tokens = int(os.environ.get("GEMINI_MAX_TOKENS", "65536"))
-        self._thinking_budget = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
+        if not api_key or not endpoint:
+            raise ValueError("AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT must be set")
+
+        self._client = AzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+        )
+        self._default_model = os.environ.get("AZURE_OPENAI_MODEL", "gpt-5-1-chat")
+        self._max_tokens = int(os.environ.get("AZURE_OPENAI_MAX_TOKENS", "65536"))
         self._tools_enabled = ANTHROPIC_TOOLS_ENABLED
         self._max_iterations = ANTHROPIC_TOOL_MAX_ITER
         self._tool_timeout = ANTHROPIC_TOOL_TIMEOUT
         self._total_timeout = ANTHROPIC_TOTAL_TIMEOUT
         self._cwd = CLAUDE_CWD
 
-        self._tools = _gemini_tools() if self._tools_enabled else None
+        self._tools = _openai_tools() if self._tools_enabled else None
 
     @property
     def name(self) -> str:
-        return "gemini_api"
+        return "azure_openai"
 
     def get_model_display(self, model: str) -> str:
         return self._resolve_model(model)
@@ -215,61 +230,58 @@ class GeminiAPIBackend:
     def _resolve_model(self, model: str) -> str:
         if not model:
             return self._default_model
-        return _GEMINI_MODEL_MAP.get(model, model)
+        return _MODEL_MAP.get(model, model)
 
     # ------------------------------------------------------------------
     # Response parsing helpers
     # ------------------------------------------------------------------
 
     def _parse_response(self, response) -> tuple[str, list[ToolCall], dict]:
-        """Parse Gemini response into (text, tool_calls, assistant_msg).
+        """Parse Azure OpenAI response into (text, tool_calls, assistant_msg).
 
         Returns the assistant message in Anthropic-compatible format so it can
         be appended to the shared conversation history without conversion.
         """
-        _log_gemini_usage(
-            getattr(response, "usage_metadata", None),
+        _log_usage(
+            getattr(response, "usage", None),
             self._default_model,
-            "gemini",
+            "azure-openai",
         )
 
-        text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         anthropic_blocks: list[dict] = []
 
-        if not response.candidates:
+        if not response.choices:
             return ("", [], {"role": "assistant", "content": []})
 
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "thought") and part.thought:
-                # Thinking content
-                thought_text = part.text or ""
-                anthropic_blocks.append({
-                    "type": "thinking",
-                    "thinking": thought_text,
-                    "signature": "",
-                })
-            elif part.function_call:
-                call_id = f"toolu_{uuid.uuid4().hex[:24]}"
-                fc = part.function_call
-                args = dict(fc.args) if fc.args else {}
+        message = response.choices[0].message
+        text = message.content or ""
+
+        if text:
+            anthropic_blocks.append({"type": "text", "text": text})
+
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                call_id = tc.id or f"call_{uuid.uuid4().hex[:24]}"
+                fn_name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except json.JSONDecodeError:
+                    args = {}
                 tool_calls.append(ToolCall(
                     id=call_id,
-                    name=fc.name,
+                    name=fn_name,
                     arguments=args,
                 ))
                 anthropic_blocks.append({
                     "type": "tool_use",
                     "id": call_id,
-                    "name": fc.name,
+                    "name": fn_name,
                     "input": args,
                 })
-            elif part.text:
-                text_parts.append(part.text)
-                anthropic_blocks.append({"type": "text", "text": part.text})
 
         assistant_msg = {"role": "assistant", "content": anthropic_blocks}
-        return ("\n".join(text_parts).strip(), tool_calls, assistant_msg)
+        return (text.strip(), tool_calls, assistant_msg)
 
     @staticmethod
     def _format_tool_result(tool_name: str, call_id: str, result_str: str) -> dict:
@@ -280,7 +292,7 @@ class GeminiAPIBackend:
                 {
                     "type": "tool_result",
                     "tool_use_id": call_id,
-                    "_tool_name": tool_name,  # Extra field for Gemini conversion
+                    "_tool_name": tool_name,  # Extra field for history conversion
                     "content": result_str,
                 }
             ],
@@ -290,61 +302,54 @@ class GeminiAPIBackend:
     # Core API call
     # ------------------------------------------------------------------
 
-    def _build_config(
+    def _build_system_text(
         self,
-        model_id: str,
         system_prompt: str | None,
         memory_context: str | None,
         extra_system_prompt: str | None = None,
-    ) -> gtypes.GenerateContentConfig:
-        """Build Gemini GenerateContentConfig."""
-        # Build system instruction from components
+    ) -> str | None:
+        """Build system text from components."""
         system_blocks = _build_system_blocks(system_prompt, memory_context, extra_system_prompt)
         system_text = "\n\n".join(b.get("text", "") for b in system_blocks if b.get("text"))
+        return system_text or None
 
-        config_kwargs = {
-            "max_output_tokens": self._max_tokens,
+    def _build_request_kwargs(
+        self,
+        model_id: str,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        memory_context: str | None = None,
+        extra_system_prompt: str | None = None,
+        stream: bool = False,
+    ) -> dict:
+        """Build kwargs for client.chat.completions.create()."""
+        system_text = self._build_system_text(system_prompt, memory_context, extra_system_prompt)
+        openai_messages = _convert_history_to_openai(messages, system_text)
+
+        kwargs = {
+            "model": model_id,
+            "messages": openai_messages,
+            "max_completion_tokens": self._max_tokens,
+            "stream": stream,
         }
 
-        if system_text:
-            config_kwargs["system_instruction"] = system_text
-
         if self._tools_enabled and self._tools:
-            config_kwargs["tools"] = self._tools
+            kwargs["tools"] = self._tools
 
-        # Thinking budget — Gemini 2.5 models support thinking
-        if self._thinking_budget and self._thinking_budget > 0:
-            config_kwargs["thinking_config"] = gtypes.ThinkingConfig(
-                thinking_budget=self._thinking_budget,
-            )
-        else:
-            # No thinking → safe to set temperature
-            config_kwargs["temperature"] = 0.7
-
-        return gtypes.GenerateContentConfig(**config_kwargs)
+        return kwargs
 
     def _generate(self, model_id: str, messages: list[dict], **system_kw):
         """Synchronous generate call."""
-        config = self._build_config(model_id, **system_kw)
-        gemini_contents = _convert_history_to_gemini(messages)
-        return self._client.models.generate_content(
-            model=model_id,
-            contents=gemini_contents,
-            config=config,
-        )
+        kwargs = self._build_request_kwargs(model_id, messages, **system_kw)
+        return self._client.chat.completions.create(**kwargs)
 
     async def _generate_async(self, model_id: str, messages: list[dict], **system_kw):
         """Async generate call (runs sync client in thread pool)."""
-        config = self._build_config(model_id, **system_kw)
-        gemini_contents = _convert_history_to_gemini(messages)
+        kwargs = self._build_request_kwargs(model_id, messages, **system_kw)
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,
-            lambda: self._client.models.generate_content(
-                model=model_id,
-                contents=gemini_contents,
-                config=config,
-            ),
+            lambda: self._client.chat.completions.create(**kwargs),
         )
 
     async def _stream_request(
@@ -354,77 +359,88 @@ class GeminiAPIBackend:
         streaming_editor=None,
         **system_kw,
     ) -> tuple[str, list, dict]:
-        """Send request via generate_content_stream and consume with streaming.
+        """Send streaming request and consume chunks.
 
-        Returns (text, tool_calls, assistant_msg) — same as _parse_response().
+        Returns (text, tool_calls, assistant_msg) -- same as _parse_response().
         """
-        config = self._build_config(model_id, **system_kw)
-        gemini_contents = _convert_history_to_gemini(messages)
+        kwargs = self._build_request_kwargs(model_id, messages, stream=True, **system_kw)
         loop = asyncio.get_event_loop()
 
         def _sync_stream():
             text_parts: list[str] = []
             tool_calls: list[ToolCall] = []
             anthropic_blocks: list[dict] = []
-            usage_metadata = None
 
-            response_stream = self._client.models.generate_content_stream(
-                model=model_id,
-                contents=gemini_contents,
-                config=config,
-            )
+            # Accumulate tool call deltas keyed by index
+            tc_accum: dict[int, dict] = {}
+
+            response_stream = self._client.chat.completions.create(**kwargs)
 
             for chunk in response_stream:
-                usage_metadata = getattr(chunk, "usage_metadata", usage_metadata)
-
-                if not chunk.candidates:
+                if not chunk.choices:
                     continue
 
-                for part in chunk.candidates[0].content.parts:
-                    if hasattr(part, "thought") and part.thought:
-                        anthropic_blocks.append({
-                            "type": "thinking",
-                            "thinking": part.text or "",
-                            "signature": "",
-                        })
-                    elif part.function_call:
-                        call_id = f"toolu_{uuid.uuid4().hex[:24]}"
-                        fc = part.function_call
-                        args = dict(fc.args) if fc.args else {}
-                        tool_calls.append(ToolCall(
-                            id=call_id,
-                            name=fc.name,
-                            arguments=args,
-                        ))
-                        anthropic_blocks.append({
-                            "type": "tool_use",
-                            "id": call_id,
-                            "name": fc.name,
-                            "input": args,
-                        })
-                    elif part.text:
-                        text_parts.append(part.text)
-                        # Stream text to editor
-                        if streaming_editor and loop:
-                            try:
-                                future = asyncio.run_coroutine_threadsafe(
-                                    streaming_editor.add_text(part.text), loop
-                                )
-                                future.result(timeout=2)
-                            except Exception:
-                                pass
+                delta = chunk.choices[0].delta
 
-            # Final text assembly
+                # Text content
+                if delta and delta.content:
+                    text_parts.append(delta.content)
+                    if streaming_editor and loop:
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                streaming_editor.add_text(delta.content), loop
+                            )
+                            future.result(timeout=2)
+                        except Exception:
+                            pass
+
+                # Tool call deltas — streamed incrementally
+                if delta and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tc_accum:
+                            tc_accum[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        if tc_delta.id:
+                            tc_accum[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tc_accum[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tc_accum[idx]["arguments"] += tc_delta.function.arguments
+
+            # Assemble final text
             full_text = "".join(text_parts).strip()
             if full_text:
-                # Collapse text parts into a single block
-                anthropic_blocks = [
-                    b for b in anthropic_blocks
-                    if b.get("type") != "text"
-                ] + [{"type": "text", "text": full_text}] if full_text else anthropic_blocks
+                anthropic_blocks.append({"type": "text", "text": full_text})
 
-            if usage_metadata:
-                _log_gemini_usage(usage_metadata, model_id, "gemini-stream")
+            # Assemble tool calls from accumulated deltas
+            for _idx in sorted(tc_accum):
+                acc = tc_accum[_idx]
+                call_id = acc["id"] or f"call_{uuid.uuid4().hex[:24]}"
+                fn_name = acc["name"]
+                try:
+                    args = json.loads(acc["arguments"]) if acc["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+                tool_calls.append(ToolCall(
+                    id=call_id,
+                    name=fn_name,
+                    arguments=args,
+                ))
+                anthropic_blocks.append({
+                    "type": "tool_use",
+                    "id": call_id,
+                    "name": fn_name,
+                    "input": args,
+                })
+
+            # Log usage from final chunk if available
+            if chunk and hasattr(chunk, "usage") and chunk.usage:
+                _log_usage(chunk.usage, model_id, "azure-openai-stream")
 
             assistant_msg = {"role": "assistant", "content": anthropic_blocks}
             return (full_text, tool_calls, assistant_msg)
@@ -491,8 +507,8 @@ class GeminiAPIBackend:
                     cwd=self._cwd,
                 )
             except Exception as e:
-                log.error("Gemini tool loop error (sync): %s", e)
-                return {"result": f"Gemini error: {e}", "session_id": session_id}
+                log.error("Azure OpenAI tool loop error (sync): %s", e)
+                return {"result": f"Azure OpenAI error: {e}", "session_id": session_id}
             result_text = result.get("result", "")
             if result_text:
                 save_conversation_history(session_id, messages)
@@ -503,7 +519,7 @@ class GeminiAPIBackend:
         try:
             resp = send_request(messages)
         except Exception as e:
-            return {"result": f"Gemini error: {e}", "session_id": session_id}
+            return {"result": f"Azure OpenAI error: {e}", "session_id": session_id}
 
         text, _tool_calls, _assistant_msg = self._parse_response(resp)
         if text:
@@ -567,8 +583,8 @@ class GeminiAPIBackend:
                     send_and_parse_stream=send_and_parse_stream,
                 )
             except Exception as e:
-                log.error("Gemini tool loop error (async): %s", e)
-                return {"result": f"Gemini error: {e}", "session_id": session_id, "written_files": []}
+                log.error("Azure OpenAI tool loop error (async): %s", e)
+                return {"result": f"Azure OpenAI error: {e}", "session_id": session_id, "written_files": []}
             result_text = result.get("result", "")
             if result_text:
                 save_conversation_history(session_id, messages)
@@ -581,7 +597,7 @@ class GeminiAPIBackend:
                 messages, streaming_editor,
             )
         except Exception as e:
-            return {"result": f"Gemini error: {e}", "session_id": session_id, "written_files": []}
+            return {"result": f"Azure OpenAI error: {e}", "session_id": session_id, "written_files": []}
 
         if text:
             save_conversation_history(session_id, messages + [

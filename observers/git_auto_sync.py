@@ -175,15 +175,16 @@ class GitAutoSyncObserver(Observer):
         return violations
 
     def _generate_commit_message(self, repo_path: str, diff_summary: str) -> str:
-        """Generate a commit message using Gemini, with fallback."""
+        """Generate a commit message using Azure OpenAI, with fallback."""
         try:
-            from google import genai
-            from google.genai import types
+            from openai import AzureOpenAI
 
-            api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+            api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+            endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+            api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
-            if api_key:
-                client = genai.Client(api_key=api_key)
+            if api_key and endpoint:
+                client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
 
                 prompt = (
                     f"Repository: {repo_path}\n\n"
@@ -192,18 +193,16 @@ class GitAutoSyncObserver(Observer):
                     "Max 72 chars. Return ONLY the message."
                 )
 
-                config = types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=100,
-                    system_instruction=BEDROCK_SYSTEM,
-                )
-                response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
-                    contents=prompt,
-                    config=config,
+                response = client.chat.completions.create(
+                    model="gpt-5-1-chat",
+                    messages=[
+                        {"role": "system", "content": BEDROCK_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_completion_tokens=100,
                 )
 
-                msg = (response.text or "").strip().strip('"').strip("'")
+                msg = (response.choices[0].message.content or "").strip().strip('"').strip("'")
 
                 # Validate — should be a single line, not too long
                 if msg and "\n" not in msg and len(msg) < 120:

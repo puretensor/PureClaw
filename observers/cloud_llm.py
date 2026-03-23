@@ -1,15 +1,18 @@
-"""Shared cloud LLM callers — Gemini (Google), xAI Grok, Bedrock (Claude), DeepSeek.
+"""Shared cloud LLM callers — Azure OpenAI, xAI Grok, Bedrock (Claude), DeepSeek.
 
 Used by intel_deep_analysis for the AI council (parallel significance scoring).
-All callers use only urllib/google-genai/boto3 — no heavy SDK dependencies.
+All callers use only urllib/openai/boto3 — no heavy SDK dependencies.
 
 Env vars:
-    GOOGLE_API_KEY         — Google AI / Gemini API key (primary)
-    GEMINI_API_KEY         — Google AI / Gemini API key (fallback)
-    XAI_API_KEY            — xAI API key (Grok)
-    AWS_ACCESS_KEY_ID      — AWS Bedrock access key
-    AWS_SECRET_ACCESS_KEY  — AWS Bedrock secret key
-    DEEPSEEK_API_KEY       — DeepSeek API key
+    AZURE_OPENAI_API_KEY       — Azure OpenAI API key
+    AZURE_OPENAI_ENDPOINT      — Azure OpenAI endpoint URL
+    AZURE_OPENAI_API_VERSION   — Azure OpenAI API version (default: 2024-12-01-preview)
+    GOOGLE_API_KEY             — Google AI / Gemini API key (deep research only)
+    GEMINI_API_KEY             — Google AI / Gemini API key (fallback, deep research only)
+    XAI_API_KEY                — xAI API key (Grok)
+    AWS_ACCESS_KEY_ID          — AWS Bedrock access key
+    AWS_SECRET_ACCESS_KEY      — AWS Bedrock secret key
+    DEEPSEEK_API_KEY           — DeepSeek API key
 """
 
 import json
@@ -20,66 +23,54 @@ import urllib.request
 
 log = logging.getLogger("nexus")
 
-# Lazy-init Gemini client (google-genai imported on first use)
-_gemini_client = None
+# Lazy-init Azure OpenAI client
+_azure_client = None
 
-# Map legacy Bedrock model IDs to Gemini models
-_GEMINI_MODEL_MAP = {
-    "us.anthropic.claude-sonnet-4-6": "gemini-3-flash-preview",
-    "us.anthropic.claude-haiku-4-5-20251001": "gemini-3-flash-preview",
-    "us.anthropic.claude-opus-4-6": "gemini-3.1-pro-preview",
-    "us.anthropic.claude-opus-4-6-v1": "gemini-3.1-pro-preview",
-}
+AZURE_DEPLOYMENT = "gpt-5-1-chat"
 
 
-def _get_gemini_client():
-    global _gemini_client
-    if _gemini_client is None:
-        from google import genai
-        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("GOOGLE_API_KEY / GEMINI_API_KEY not set")
-        _gemini_client = genai.Client(api_key=api_key)
-    return _gemini_client
+def _get_azure_client():
+    global _azure_client
+    if _azure_client is None:
+        from openai import AzureOpenAI
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+        if not api_key or not endpoint:
+            raise RuntimeError("AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT not set")
+        _azure_client = AzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+        )
+    return _azure_client
 
 
-def _resolve_model(model_id: str) -> str:
-    """Resolve legacy Bedrock model IDs to Gemini model names."""
-    return _GEMINI_MODEL_MAP.get(model_id, model_id)
-
-
-def call_claude_bedrock(system_prompt: str, user_prompt: str, timeout: int = 60,
-                        temperature: float = 0.3,
-                        model_id: str = "gemini-3-flash-preview") -> str:
-    """Call Gemini via google-genai SDK. Returns text content.
-
-    Kept as call_claude_bedrock for backward compatibility with existing callers.
-    """
-    from google.genai import types
-    client = _get_gemini_client()
-    model = _resolve_model(model_id)
-    config = types.GenerateContentConfig(
-        temperature=temperature,
-        max_output_tokens=4096,
-        system_instruction=system_prompt,
+def call_azure_openai(system_prompt: str, user_prompt: str, timeout: int = 60,
+                      temperature: float = 0.3,
+                      deployment: str = AZURE_DEPLOYMENT) -> str:
+    """Call Azure OpenAI via chat completions. Returns text content."""
+    client = _get_azure_client()
+    kwargs = dict(
+        model=deployment,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_completion_tokens=4096,
+        timeout=timeout,
     )
-    response = client.models.generate_content(
-        model=model,
-        contents=user_prompt,
-        config=config,
-    )
-    return (response.text or "").strip()
+    # GPT-5.1 models only support default temperature (1)
+    if not deployment.startswith("gpt-5"):
+        kwargs["temperature"] = temperature
+    response = client.chat.completions.create(**kwargs)
+    return (response.choices[0].message.content or "").strip()
 
 
-def call_claude_bedrock_haiku(system_prompt: str, user_prompt: str, timeout: int = 60,
-                              temperature: float = 0.3) -> str:
-    """Call Gemini 3.0 Flash (fast/cheap). Backward-compatible name."""
-    return call_claude_bedrock(system_prompt, user_prompt, timeout, temperature,
-                               model_id="gemini-3-flash-preview")
-
-
-# Backward-compatible aliases
-call_gemini_flash = call_claude_bedrock_haiku
+# Backward-compatible aliases — all text generation now routes through Azure OpenAI
+call_gemini_flash = call_azure_openai
+call_claude_bedrock = call_azure_openai
+call_claude_bedrock_haiku = call_azure_openai
 
 
 def call_xai_grok(system_prompt: str, user_prompt: str, timeout: int = 60,
@@ -149,7 +140,7 @@ def call_bedrock_sonnet(system_prompt: str, user_prompt: str, timeout: int = 60,
 
 
 # Backward-compatible alias
-call_claude_haiku = call_claude_bedrock_haiku
+call_claude_haiku = call_azure_openai
 
 
 def call_deepseek(system_prompt: str, user_prompt: str, timeout: int = 60,
