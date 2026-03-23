@@ -5,7 +5,7 @@ Runs at 8 AM weekdays via the Observer registry:
   1. Fetches today's headlines from major news RSS feeds
   2. Generates a structured intelligence brief with source citations
   3. Validates source fidelity (brief vs. cited headlines)
-  4. Validates ON THIS DAY / QUOTE via Gemini Google Search grounding
+  4. Validates ON THIS DAY / QUOTE via Gemini Google Search grounding (kept on Gemini for grounding)
   5. Runs AI council quality gate (4 models in parallel)
   6. Sends as HTML email to configured recipients
 
@@ -43,34 +43,35 @@ class DailySnippetObserver(Observer):
     # -----------------------------------------------------------------------
 
     def _call_cloud_llm(self, prompt: str, timeout: int = 120) -> str:
-        """Call cloud LLM with Gemini primary, DeepSeek fallback.
+        """Call cloud LLM with Azure OpenAI primary, DeepSeek fallback.
 
         Bypasses the Nexus engine entirely -- no vLLM dependency.
         """
-        # --- Gemini (primary) ---
-        gemini_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-        if gemini_key:
+        # --- Azure OpenAI (primary) ---
+        azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+        if azure_key and azure_endpoint:
             try:
-                from google import genai
-                from google.genai import types as gtypes
+                from openai import AzureOpenAI
 
-                client = genai.Client(api_key=gemini_key)
-                config = gtypes.GenerateContentConfig(
-                    max_output_tokens=8192,
-                    temperature=0.7,
+                client = AzureOpenAI(
+                    api_key=azure_key,
+                    azure_endpoint=azure_endpoint,
+                    api_version=azure_api_version,
                 )
-                response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
-                    contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                    config=config,
+                response = client.chat.completions.create(
+                    model="gpt-5-1-chat",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=8192,
                 )
-                text = response.text or ""
+                text = response.choices[0].message.content or ""
                 if text.strip():
-                    log.info("Cloud LLM: Gemini OK (%d chars)", len(text))
+                    log.info("Cloud LLM: Azure OpenAI OK (%d chars)", len(text))
                     return text.strip()
-                log.warning("Cloud LLM: Gemini returned empty response")
+                log.warning("Cloud LLM: Azure OpenAI returned empty response")
             except Exception as e:
-                log.warning("Cloud LLM: Gemini failed: %s", e)
+                log.warning("Cloud LLM: Azure OpenAI failed: %s", e)
 
         # --- DeepSeek (fallback) ---
         deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")

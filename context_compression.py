@@ -108,24 +108,22 @@ def _build_summary_prompt(old_messages: list[dict]) -> str:
 
 
 def _call_summarizer_sync(prompt: str) -> str:
-    """Call Gemini Flash to summarize. Synchronous (runs in thread pool)."""
-    from google import genai
-    from google.genai import types
+    """Call Azure OpenAI GPT-5.1-chat to summarize. Synchronous (runs in thread pool)."""
+    from openai import AzureOpenAI
 
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        raise ValueError("Gemini: GOOGLE_API_KEY not set")
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+    if not api_key or not endpoint:
+        raise ValueError("AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT not set")
 
-    client = genai.Client(api_key=api_key)
-    config = types.GenerateContentConfig(
-        max_output_tokens=2000,
+    client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
+    response = client.chat.completions.create(
+        model="gpt-5-1-chat",
+        messages=[{"role": "user", "content": prompt}],
+        max_completion_tokens=2000,
     )
-    response = client.models.generate_content(
-        model=SUMMARY_MODEL,
-        contents=prompt,
-        config=config,
-    )
-    return (response.text or "").strip()
+    return (response.choices[0].message.content or "").strip()
 
 
 def compress_history(messages: list[dict]) -> list[dict]:
