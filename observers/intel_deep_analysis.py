@@ -3,8 +3,8 @@
 
 Collects news from RSS+GDELT+X/Twitter+Financial feeds, uses an AI council
 (3 cloud LLMs) to score significance, runs Gemini Deep Research on the top
-event, generates long-form analysis articles, and publishes to both
-intel.puretensor.ai and intel.varangian.ai.
+event, generates long-form analysis articles, and publishes to
+intel.puretensor.ai.
 
 Schedule: every 8 hours (0 */8 * * *)
 """
@@ -1020,8 +1020,8 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
     # ── Landing Page Feed ───────────────────────────────────────────
 
     def _update_landing_feed(self, all_published: list):
-        """Update varangian.ai landing-page activity ticker feed (intel section)."""
-        feed_path = "/var/www/varangian.ai/html/api/feed.json"
+        """Update puretensor.ai landing-page activity ticker feed (intel section)."""
+        feed_path = "/var/www/puretensor.ai/html/api/feed.json"
         try:
             r = subprocess.run(
                 ["ssh", GCP_SSH_HOST, f"cat {feed_path}"],
@@ -1035,14 +1035,12 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
 
         now = datetime.now(timezone.utc).isoformat()
         for p in all_published:
-            varangian_url = next(
-                (u for u in p["urls"] if "varangian" in u), p["urls"][0] if p["urls"] else "",
-            )
-            if varangian_url:
+            url = p["urls"][0] if p["urls"] else ""
+            if url:
                 feed["intel"].insert(0, {
                     "title": p["topic"],
                     "domain": p["domain"],
-                    "url": varangian_url,
+                    "url": url,
                     "time": now,
                 })
         feed["intel"] = feed["intel"][:10]
@@ -1111,7 +1109,7 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
 
             # 7. Generate, deploy for each brand
             published_urls = []
-            for brand in ("puretensor", "varangian"):
+            for brand in ("puretensor",):
                 article = self._generate_article(
                     f"{domain}: {topic}", research, domain_result["angles"],
                     domain_articles, brand,
@@ -1255,7 +1253,7 @@ if __name__ == "__main__":
         else:
             print("  Deep research failed — will use fallback")
 
-        for brand in ("puretensor", "varangian"):
+        for brand in ("puretensor",):
             print(f"\n[write:{brand}] Generating article...")
             article = obs._generate_article(
                 f"{domain}: {topic}", research, domain_result["angles"],
