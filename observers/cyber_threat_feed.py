@@ -352,7 +352,7 @@ class CyberThreatFeedObserver(Observer):
             resp = urllib.request.urlopen(req, timeout=15)
             xml_bytes = resp.read()
         except Exception:
-            pass
+            log.debug("RSS urllib fetch failed for %s", url, exc_info=True)
 
         # Fallback to curl for sites that block Python
         if xml_bytes is None:
@@ -366,7 +366,7 @@ class CyberThreatFeedObserver(Observer):
                 if result.returncode == 0 and result.stdout:
                     xml_bytes = result.stdout
             except Exception:
-                pass
+                log.debug("RSS curl fallback failed for %s", url, exc_info=True)
 
         if xml_bytes is None:
             log.warning("[%s] RSS fetch failed (urllib + curl)", name)
@@ -1121,6 +1121,7 @@ main {{
                 "updated": "", "intel": [], "cyber": [],
             }
         except Exception:
+            log.debug("Failed to read existing landing feed from %s", feed_path, exc_info=True)
             feed = {"updated": "", "intel": [], "cyber": []}
 
         parts = []
@@ -1378,9 +1379,9 @@ if __name__ == "__main__":
     observer = CyberThreatFeedObserver()
 
     if args.collect_only:
-        print("Collecting intelligence...")
+        log.info("Collecting intelligence...")
         intel = observer.collect_all_intelligence()
-        print(json.dumps(intel, indent=2, default=str))
+        log.info("Collected intel:\n%s", json.dumps(intel, indent=2, default=str))
         sys.exit(0)
 
     if args.no_deploy or args.output:
@@ -1388,7 +1389,7 @@ if __name__ == "__main__":
         ctx = ObserverContext()
         timestamp = ctx.now.strftime("%Y-%m-%d %H:%M UTC")
 
-        print("Collecting intelligence...")
+        log.info("Collecting intelligence...")
         intel = observer.collect_all_intelligence()
         intel_stats = {
             "critical_cves": len(intel["nvd_critical"]),
@@ -1398,19 +1399,19 @@ if __name__ == "__main__":
             "malware_count": len(intel["malware_bazaar"]),
             "c2_count": len(intel["feodo_tracker"]),
         }
-        print(f"Stats: {intel_stats}")
+        log.info("Stats: %s", intel_stats)
 
-        print("Generating briefing via LLM (Ollama → Gemini fallback)...")
+        log.info("Generating briefing via LLM (Ollama / Gemini fallback)...")
         prompt = observer.build_analysis_prompt(intel, timestamp)
         try:
             briefing_html, backend = observer.call_llm_for_briefing(prompt, timeout=300)
-            print(f"  Backend: {backend}")
+            log.info("  Backend: %s", backend)
         except RuntimeError as e:
-            print(f"ERROR: LLM generation failed: {e}", file=sys.stderr)
+            log.error("LLM generation failed: %s", e)
             sys.exit(1)
 
         if not briefing_html:
-            print("ERROR: LLM returned empty response", file=sys.stderr)
+            log.error("LLM returned empty response")
             sys.exit(1)
 
         briefing_html = re.sub(r"^```(?:html)?\s*", "", briefing_html)
@@ -1421,7 +1422,7 @@ if __name__ == "__main__":
         out = args.output or "/tmp/cyber_briefing_preview.html"
         with open(out, "w") as f:
             f.write(page)
-        print(f"Written to {out}")
+        log.info("Written to %s", out)
         sys.exit(0)
 
     # Full run
@@ -1430,7 +1431,7 @@ if __name__ == "__main__":
     result = observer.run(ctx)
 
     if result.success:
-        print(f"SUCCESS: {result.data}")
+        log.info("SUCCESS: %s", result.data)
     else:
-        print(f"FAILED: {result.error}", file=sys.stderr)
+        log.error("FAILED: %s", result.error)
         sys.exit(1)
