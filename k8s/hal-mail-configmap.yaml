@@ -36,6 +36,8 @@ data:
 
   # Agent identity — personality is per-profile, not global
   AGENT_NAME: "PureClaw"
+  AGENT_EMAIL: "hal@puretensors.com,hal@puretensor.com,hal@puretensor.ai"
+  GMAIL_IDENTITY: "hal"
 
   # Claude fallback config
   CLAUDE_CWD: "/app"
