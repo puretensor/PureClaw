@@ -207,9 +207,9 @@ if __name__ == "__main__":
 
     if result.success:
         if result.message:
-            print(result.message)
+            log.info(result.message)
         else:
-            print(f"{datetime.now(timezone.utc).isoformat()} — All nodes up")
+            log.info("%s — All nodes up", datetime.now(timezone.utc).isoformat())
     else:
-        print(f"ERROR: {result.error}", file=sys.stderr)
+        log.error("ERROR: %s", result.error)
         sys.exit(1)

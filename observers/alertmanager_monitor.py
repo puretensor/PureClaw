@@ -159,6 +159,6 @@ if __name__ == "__main__":
     observer = AlertmanagerMonitorObserver()
     result = observer.run()
     if result.message:
-        print(f"OK: {result.message}")
+        log.info("OK: %s", result.message)
     else:
-        print(f"OK: {result.data}")
+        log.info("OK: %s", result.data)

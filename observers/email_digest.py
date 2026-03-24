@@ -150,7 +150,7 @@ class EmailDigestObserver(Observer):
             try:
                 conn.logout()
             except Exception:
-                pass
+                log.debug("IMAP logout failed", exc_info=True)
 
     # -- Observer entry point --
 
@@ -281,9 +281,9 @@ if __name__ == "__main__":
 
     if result.success:
         if result.message:
-            print(f"OK: {result.message}")
+            log.info("OK: %s", result.message)
         else:
-            print(f"OK: no new emails (checked {result.data.get('accounts', '?')} accounts)")
+            log.info("OK: no new emails (checked %s accounts)", result.data.get('accounts', '?'))
     else:
-        print(f"FAILED: {result.error}", file=sys.stderr)
+        log.error("FAILED: %s", result.error)
         sys.exit(1)
