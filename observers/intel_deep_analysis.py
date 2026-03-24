@@ -301,7 +301,7 @@ class IntelDeepAnalysisObserver(Observer):
             try:
                 return json.loads(self.STATE_FILE.read_text())
             except (json.JSONDecodeError, TypeError):
-                pass
+                log.debug("Caught exception in _load_state", exc_info=True)
         return {"published_hashes": [], "last_run": None}
 
     def _save_state(self, state: dict):
@@ -1217,11 +1217,11 @@ if __name__ == "__main__":
 
     obs = IntelDeepAnalysisObserver()
 
-    print("[collect] Fetching all data sources...")
+    log.info("[collect] Fetching all data sources...")
     articles = obs._collect_all()
-    print(f"  {len(articles)} unique articles collected")
+    log.info("  %d unique articles collected", len(articles))
     for a in articles[:8]:
-        print(f"  - [{a['source']}] {a['title'][:70]}")
+        log.info("  - [%s] %s", a['source'], a['title'][:70])
 
     if args.collect_only:
         _sys.exit(0)
@@ -1234,20 +1234,20 @@ if __name__ == "__main__":
             "articles": articles[:15], "council_models": ["forced"],
         }]
     else:
-        print("\n[classify] Sorting articles into 4 domains...")
+        log.info("[classify] Sorting articles into 4 domains...")
         domains = obs._classify_by_domain(articles)
         for d, data in domains.items():
-            print(f"  - {d}: {len(data['articles'])} articles — {data.get('theme', '')[:60]}")
+            log.info("  - %s: %d articles -- %s", d, len(data['articles']), data.get('theme', '')[:60])
 
-        print("\n[council] Running AI council on all domains (3 models in parallel)...")
+        log.info("[council] Running AI council on all domains (3 models in parallel)...")
         qualified = obs._council_score_domains(domains)
         if not qualified:
-            print("  No domains above significance threshold. Exiting.")
+            log.info("  No domains above significance threshold. Exiting.")
             _sys.exit(0)
 
     for q in qualified:
-        print(f"\n  QUALIFIED: {q['domain']} — {q['topic'][:60]} (score: {q['score']:.1f})")
-    print(f"  Council: {', '.join(qualified[0]['council_models'])}")
+        log.info("  QUALIFIED: %s -- %s (score: %.1f)", q['domain'], q['topic'][:60], q['score'])
+    log.info("  Council: %s", ', '.join(qualified[0]['council_models']))
 
     if args.council_only:
         _sys.exit(0)
@@ -1257,45 +1257,45 @@ if __name__ == "__main__":
         topic = domain_result["topic"]
         score = domain_result["score"]
 
-        print(f"\n{'='*60}")
-        print(f"[{domain}] {topic} (score: {score:.1f})")
-        print(f"{'='*60}")
+        log.info("=" * 60)
+        log.info("[%s] %s (score: %.1f)", domain, topic, score)
+        log.info("=" * 60)
 
-        print(f"[research] Running Gemini Deep Research (may take 2-6 min)...")
+        log.info("[research] Running Gemini Deep Research (may take 2-6 min)...")
         context = "\n".join(f"- {a['title']}" for a in domain_result["articles"][:15])
         research = obs._deep_research(f"{domain}: {topic}", domain_result["angles"], context)
         if research:
-            print(f"  Research complete: {len(research)} chars")
+            log.info("  Research complete: %d chars", len(research))
         else:
-            print("  Deep research failed — will use fallback")
+            log.warning("  Deep research failed -- will use fallback")
 
         for brand in ("puretensor",):
-            print(f"\n[write:{brand}] Generating article...")
+            log.info("[write:%s] Generating article...", brand)
             article = obs._generate_article(
                 f"{domain}: {topic}", research, domain_result["angles"],
                 domain_result["articles"], brand,
             )
             if not article:
-                print(f"  Article generation failed for {brand}")
+                log.error("  Article generation failed for %s", brand)
                 continue
             article["category"] = domain
-            print(f"  Title: {article['title']}")
-            print(f"  Body: {len(article['body'])} chars")
+            log.info("  Title: %s", article['title'])
+            log.info("  Body: %d chars", len(article['body']))
 
             html = obs._generate_html(article, brand, score, domain_result["council_models"])
-            print(f"  HTML: {len(html):,} bytes")
+            log.info("  HTML: %s bytes", f"{len(html):,}")
 
             if args.dry_run:
                 out = Path.home() / f"intel_deep_analysis_preview_{domain.lower()}_{brand}.html"
                 out.write_text(html)
-                print(f"  [DRY RUN] Saved to {out}")
+                log.info("  [DRY RUN] Saved to %s", out)
             else:
-                print(f"  Deploying to {BRANDS[brand]['site_url']}...")
+                log.info("  Deploying to %s...", BRANDS[brand]['site_url'])
                 url = obs._deploy(article, html, brand)
-                print(f"  Deployed: {url}")
+                log.info("  Deployed: %s", url)
                 obs._update_index(article, score, brand)
                 summary = obs._generate_briefing_summary(article)
                 obs._update_briefings_index(article, score, summary, brand)
-                print(f"  Index + briefings updated")
+                log.info("  Index + briefings updated")
 
-    print("\nDone.")
+    log.info("Done.")
