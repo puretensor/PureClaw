@@ -118,7 +118,7 @@ class GitPushObserver(Observer):
                     diff_text = diff_text[:self.MAX_DIFF_CHARS] + "\n... [truncated]"
                 return diff_text
         except Exception:
-            pass  # Fall through to commit patch fallback
+            log.debug("Compare endpoint failed, falling back to commit patch", exc_info=True)
 
         # Fallback: fetch the commit patch directly
         patch_url = (
@@ -381,12 +381,12 @@ if __name__ == "__main__":
     from config import log as _  # noqa: F401 — triggers logging setup
 
     observer = GitPushObserver()
-    print(f"Starting git push observer on port {observer.LISTEN_PORT}...")
-    print(f"  Gitea URL: {observer.GITEA_URL}")
-    print(f"  HMAC verification: {'enabled' if observer.WEBHOOK_SECRET else 'disabled'}")
-    print(f"  Max diff chars: {observer.MAX_DIFF_CHARS}")
+    log.info("Starting git push observer on port %d...", observer.LISTEN_PORT)
+    log.info("  Gitea URL: %s", observer.GITEA_URL)
+    log.info("  HMAC verification: %s", "enabled" if observer.WEBHOOK_SECRET else "disabled")
+    log.info("  Max diff chars: %d", observer.MAX_DIFF_CHARS)
 
     try:
         observer.run()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        log.info("Shutting down...")

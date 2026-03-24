@@ -496,7 +496,7 @@ class WeeklyReportObserver(Observer):
             try:
                 return json.loads(sf.read_text()).get("last_compiled_week", "")
             except Exception:
-                pass
+                log.debug("Failed to load weekly report state", exc_info=True)
         return ""
 
     def _set_last_week(self, start_date: str):
@@ -629,10 +629,10 @@ if __name__ == "__main__":
 
     result = observer.run()
     if result.success:
-        print(f"Weekly report completed: {result.message}")
+        log.info("Weekly report completed: %s", result.message)
         if result.data:
-            print(f"  PDF: {result.data.get('pdf_path', 'N/A')}")
-            print(f"  Drive: {result.data.get('drive_link', 'N/A')}")
+            log.info("  PDF: %s", result.data.get('pdf_path', 'N/A'))
+            log.info("  Drive: %s", result.data.get('drive_link', 'N/A'))
     else:
-        print(f"Weekly report failed: {result.error}", file=sys.stderr)
+        log.error("Weekly report failed: %s", result.error)
         sys.exit(1)
