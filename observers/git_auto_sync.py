@@ -353,7 +353,7 @@ class GitAutoSyncObserver(Observer):
             try:
                 return json.loads(sf.read_text())
             except Exception:
-                pass
+                log.debug("Failed to load git_auto_sync state file", exc_info=True)
         return {"total_syncs": 0, "total_commits": 0, "total_pushes": 0}
 
     def _save_state(self, state: dict):
@@ -468,24 +468,24 @@ if __name__ == "__main__":
     observer = GitAutoSyncObserver()
 
     if "--dry-run" in sys.argv:
-        print("DRY RUN — checking for dirty repos only")
+        log.info("DRY RUN — checking for dirty repos only")
         dirty = observer._get_dirty_repos()
         for repo in dirty:
-            print(f"  {repo['path']}: {repo['change_count']} changes")
+            log.info("  %s: %d changes", repo["path"], repo["change_count"])
             diff = observer._get_diff_summary(repo["path"])
             msg = observer._generate_commit_message(repo["path"], diff)
-            print(f"    Would commit: {msg}")
+            log.info("    Would commit: %s", msg)
             violations = observer._pre_commit_security_check(repo)
             if violations:
-                print(f"    BLOCKED: {violations}")
+                log.warning("    BLOCKED: %s", violations)
         sys.exit(0)
 
     result = observer.run()
     if result.success:
-        print(f"Sync completed: {result.message}")
+        log.info("Sync completed: %s", result.message)
     else:
-        print(f"Sync issues: {result.message}", file=sys.stderr)
+        log.error("Sync issues: %s", result.message)
         if result.data:
             for r in result.data.get("results", []):
                 if r.get("error"):
-                    print(f"  {r['repo']}: {r['error']}", file=sys.stderr)
+                    log.error("  %s: %s", r["repo"], r["error"])
