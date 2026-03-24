@@ -245,7 +245,7 @@ if __name__ == "__main__":
     result = observer.run(ctx)
 
     if result.success:
-        print(f"SUCCESS: {result.data}")
+        log.info("SUCCESS: %s", result.data)
     else:
-        print(f"FAILED: {result.error}", file=sys.stderr)
+        log.error("FAILED: %s", result.error)
         sys.exit(1)

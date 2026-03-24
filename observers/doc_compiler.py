@@ -743,7 +743,7 @@ if __name__ == "__main__":
 
     result = observer.run()
     if result.success:
-        print(f"Doc compiler completed: {result.message}")
+        log.info("Doc compiler completed: %s", result.message)
     else:
-        print(f"Doc compiler failed: {result.error}", file=sys.stderr)
+        log.error("Doc compiler failed: %s", result.error)
         sys.exit(1)
