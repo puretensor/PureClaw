@@ -980,7 +980,7 @@ class DarwinConsumer(Observer):
                     try:
                         consumer.close()
                     except Exception:
-                        pass
+                        log.debug("Error closing Kafka consumer", exc_info=True)
 
         return ObserverResult(success=True, message="Darwin consumer stopped")
 
@@ -1012,7 +1012,7 @@ if __name__ == "__main__":
         from dotenv import load_dotenv
         load_dotenv(project_root / ".env")
     except ImportError:
-        pass
+        log.debug("dotenv not available, skipping .env load", exc_info=True)
 
     # Set up logging
     logging.basicConfig(
@@ -1021,17 +1021,17 @@ if __name__ == "__main__":
     )
 
     consumer = DarwinConsumer()
-    print(f"Darwin consumer starting...")
-    print(f"  Bootstrap: {consumer.bootstrap}")
-    print(f"  Topic:     {consumer.topic}")
-    print(f"  Key:       {'configured' if consumer.api_key else 'NOT SET'}")
-    print(f"  Snapshot:  {consumer.snapshot_path}")
+    log.info("Darwin consumer starting...")
+    log.info("  Bootstrap: %s", consumer.bootstrap)
+    log.info("  Topic:     %s", consumer.topic)
+    log.info("  Key:       %s", "configured" if consumer.api_key else "NOT SET")
+    log.info("  Snapshot:  %s", consumer.snapshot_path)
 
     if not consumer.api_key:
-        print("\nWARNING: DARWIN_KAFKA_KEY not set. Set credentials in .env first.")
+        log.warning("DARWIN_KAFKA_KEY not set. Set credentials in .env first.")
         sys.exit(1)
 
     try:
         consumer.run()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        log.info("Shutting down...")
