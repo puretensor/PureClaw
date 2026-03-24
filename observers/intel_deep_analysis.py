@@ -1020,8 +1020,8 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
     # ── Landing Page Feed ───────────────────────────────────────────
 
     def _update_landing_feed(self, all_published: list):
-        """Update puretensor.ai landing-page activity ticker feed (intel section)."""
-        feed_path = "/var/www/puretensor.ai/html/api/feed.json"
+        """Update intel.puretensor.ai landing-page activity ticker feed."""
+        feed_path = "/var/www/intel.puretensor.ai/api/feed.json"
         try:
             r = subprocess.run(
                 ["ssh", GCP_SSH_HOST, f"cat {feed_path}"],
@@ -1038,10 +1038,12 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
             url = p["urls"][0] if p["urls"] else ""
             if url:
                 feed["intel"].insert(0, {
-                    "title": p["topic"],
+                    "title": p.get("title") or p["topic"],
                     "domain": p["domain"],
                     "url": url,
                     "time": now,
+                    "subtitle": p.get("subtitle", ""),
+                    "summary": p.get("summary", ""),
                 })
         feed["intel"] = feed["intel"][:10]
         feed["updated"] = now
@@ -1143,9 +1145,23 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
 
             if published_urls:
                 state["published_hashes"].append(topic_hash)
+                # Extract executive summary from article body (first ~400 chars after EXECUTIVE SUMMARY)
+                exec_summary = ""
+                if article and article.get("body"):
+                    import re as _re
+                    _m = _re.search(r"(?i)executive\s+summary[:\s]*(.*?)(?:\n\n|\n#|\n\*\*)", article["body"])
+                    if _m:
+                        exec_summary = _m.group(1).strip()[:500]
+                    if not exec_summary:
+                        # Fallback: first paragraph of body
+                        _paras = [p.strip() for p in article["body"].split("\n\n") if len(p.strip()) > 80]
+                        exec_summary = _paras[0][:500] if _paras else ""
                 all_published.append({
                     "domain": domain, "topic": topic, "score": score,
                     "urls": published_urls,
+                    "subtitle": article.get("subtitle", "") if article else "",
+                    "summary": exec_summary,
+                    "title": article.get("title", "") if article else "",
                 })
 
         if not all_published:
@@ -1157,7 +1173,7 @@ CATEGORY: [one of: Geopolitical, Technology, Defence, Financial, Cybersecurity, 
         state["last_run"] = datetime.now(timezone.utc).isoformat()
         self._save_state(state)
 
-        # 8b. Update varangian.ai landing page feed
+        # 8b. Update intel.puretensor.ai landing page feed
         try:
             self._update_landing_feed(all_published)
         except Exception as e:
