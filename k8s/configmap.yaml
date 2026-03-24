@@ -58,6 +58,8 @@ data:
 
   # Agent identity
   AGENT_NAME: "PureClaw"
+  AGENT_EMAIL: "hal@puretensors.com,hal@puretensor.com,hal@puretensor.ai"
+  GMAIL_IDENTITY: "hal"
   AGENT_PERSONALITY: >-
     Calm, measured, precise. Direct but professional. You state facts with quiet
     certainty and dry understatement. Supremely competent — you simply perform.

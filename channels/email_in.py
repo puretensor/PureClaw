@@ -211,6 +211,24 @@ def _parse_email_age(date_str: str) -> timedelta | None:
         return None
 
 
+def _xoauth2_connect(server: str, port: int, username: str, token_path: str):
+    """Connect to IMAP using OAuth2 XOAUTH2 (for Google Workspace accounts)."""
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    creds = Credentials.from_authorized_user_file(token_path)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        # Persist refreshed token (emptyDir is writable)
+        with open(token_path, "w") as f:
+            f.write(creds.to_json())
+
+    auth_string = f"user={username}\x01auth=Bearer {creds.token}\x01\x01"
+    conn = imaplib.IMAP4_SSL(server, port)
+    conn.authenticate("XOAUTH2", lambda _: auth_string.encode())
+    return conn
+
+
 def fetch_new_emails(account: dict, role: str = "monitor") -> list[dict]:
     """Fetch unread emails from a single IMAP account.
 
@@ -222,13 +240,16 @@ def fetch_new_emails(account: dict, role: str = "monitor") -> list[dict]:
     server = account["server"]
     port = account.get("port", 993)
     username = account["username"]
-    password = account["password"]
 
     is_primary = (role == "primary")
 
     try:
-        conn = imaplib.IMAP4_SSL(server, port)
-        conn.login(username, password)
+        if account.get("auth_type") == "xoauth2":
+            conn = _xoauth2_connect(server, port, username, account["token_path"])
+        else:
+            password = account["password"]
+            conn = imaplib.IMAP4_SSL(server, port)
+            conn.login(username, password)
     except Exception as e:
         log.warning("Email input: connection to %s failed: %s", server, e)
         return []
