@@ -1275,7 +1275,7 @@ Rules:
                 data = json.loads(sf.read_text())
                 return data.get("last_compiled_date", "")
             except Exception:
-                pass
+                log.debug("Failed to load daily report state", exc_info=True)
         return ""
 
     def _set_last_date(self, date_str: str) -> None:
@@ -1447,10 +1447,10 @@ if __name__ == "__main__":
     result = observer.run()
 
     if result.success:
-        print(f"Daily report completed: {result.message}")
+        log.info("Daily report completed: %s", result.message)
         if result.data:
-            print(f"  PDF: {result.data.get('pdf_path', 'N/A')}")
-            print(f"  Drive: {result.data.get('drive_link', 'N/A')}")
+            log.info("  PDF: %s", result.data.get('pdf_path', 'N/A'))
+            log.info("  Drive: %s", result.data.get('drive_link', 'N/A'))
     else:
-        print(f"Daily report failed: {result.error}", file=sys.stderr)
+        log.error("Daily report failed: %s", result.error)
         sys.exit(1)

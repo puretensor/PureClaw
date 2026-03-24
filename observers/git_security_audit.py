@@ -117,7 +117,7 @@ class GitSecurityAuditObserver(Observer):
             try:
                 return json.loads(sf.read_text())
             except Exception:
-                pass
+                log.debug("Failed to load security audit state", exc_info=True)
         return {"known_findings": [], "last_run": "", "total_scans": 0}
 
     def _save_state(self, state: dict):
@@ -371,15 +371,15 @@ if __name__ == "__main__":
         sf = observer._state_file()
         if sf.exists():
             sf.unlink()
-            print("State reset — fresh scan")
+            log.info("State reset — fresh scan")
 
     result = observer.run()
     if result.success:
-        print(f"Audit completed: {result.message}")
+        log.info("Audit completed: %s", result.message)
         if result.data:
-            print(f"  Repos: {result.data.get('repos_scanned', 0)}")
-            print(f"  Total findings: {result.data.get('total_findings', 0)}")
-            print(f"  New findings: {result.data.get('new_findings', 0)}")
+            log.info("  Repos: %s", result.data.get('repos_scanned', 0))
+            log.info("  Total findings: %s", result.data.get('total_findings', 0))
+            log.info("  New findings: %s", result.data.get('new_findings', 0))
     else:
-        print(f"Audit failed: {result.error}", file=sys.stderr)
+        log.error("Audit failed: %s", result.error)
         sys.exit(1)
