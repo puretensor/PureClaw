@@ -977,47 +977,47 @@ if __name__ == "__main__":
 
     obs = IntelBriefingObserver()
 
-    print("[intel_briefing] Fetching RSS feeds...")
+    log.info("Fetching RSS feeds...")
     rss = obs._fetch_all_rss()
-    print(f"  RSS: {len(rss)} articles from {len(obs._load_rss_feeds())} feeds")
+    log.info("RSS: %d articles from %d feeds", len(rss), len(obs._load_rss_feeds()))
 
     if not args.rss_only:
-        print("[intel_briefing] Fetching GDELT trending...")
+        log.info("Fetching GDELT trending...")
         gdelt = obs._fetch_gdelt_trending()
-        print(f"  GDELT: {len(gdelt)} articles")
+        log.info("GDELT: %d articles", len(gdelt))
     else:
         gdelt = []
 
     if args.skip_ollama:
-        print("[intel_briefing] Skipping Ollama (--skip-ollama)")
-        print(f"  Total articles: {len(rss) + len(gdelt)}")
-        # Print sample articles
+        log.info("Skipping Ollama (--skip-ollama)")
+        log.info("Total articles: %d", len(rss) + len(gdelt))
+        # Log sample articles
         for art in (rss + gdelt)[:10]:
-            print(f"  - [{art['source']}] {art['title'][:80]}")
+            log.info("  - [%s] %s", art['source'], art['title'][:80])
         sys.exit(0)
 
-    print("[intel_briefing] Generating briefing via LLM (Ollama → Gemini fallback)...")
+    log.info("Generating briefing via LLM...")
     briefing = obs._generate_briefing(rss, gdelt)
-    print(f"  Title: {briefing['title']}")
-    print(f"  Backend: {briefing.get('backend', 'unknown')}")
-    print(f"  Category: {briefing['category']}")
-    print(f"  Slug: {briefing['slug']}")
+    log.info("Title: %s", briefing['title'])
+    log.info("Backend: %s", briefing.get('backend', 'unknown'))
+    log.info("Category: %s", briefing['category'])
+    log.info("Slug: %s", briefing['slug'])
 
     html = obs._generate_briefing_html(briefing)
-    print(f"  HTML: {len(html):,} bytes")
+    log.info("HTML: %d bytes", len(html))
 
     if args.dry_run:
         # Save locally for review
         out_path = Path.home() / "intel_briefing_preview.html"
         out_path.write_text(html)
-        print(f"  [DRY RUN] Saved preview to {out_path}")
-        print(f"  Body preview (first 500 chars):")
-        print(f"  {briefing['body'][:500]}...")
+        log.info("[DRY RUN] Saved preview to %s", out_path)
+        log.info("Body preview (first 500 chars):")
+        log.info("%s...", briefing['body'][:500])
     else:
-        print("[intel_briefing] Deploying to GCP...")
+        log.info("Deploying to GCP...")
         url = obs._deploy_briefing(briefing, html)
-        print(f"  Deployed: {url}")
+        log.info("Deployed: %s", url)
 
-        print("[intel_briefing] Updating index.html...")
+        log.info("Updating index.html...")
         obs._update_index(briefing)
-        print("  Done.")
+        log.info("Done.")
