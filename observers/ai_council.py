@@ -296,25 +296,25 @@ if __name__ == "__main__":
         },
     }
 
-    print("Running AI Council test with 4 models...")
-    print(f"Content: {test_content[:100]}...\n")
+    log.info("Running AI Council test with 4 models...")
+    log.info("Content: %s...", test_content[:100])
 
     result = run_council(test_content, test_roles, threshold=5.0, timeout=60)
 
-    print(f"\nResults ({result.responded}/{result.total} responded):")
-    print(f"  Average: {result.average_score}/10")
-    print(f"  Verdict: {result.verdict}")
-    print(f"  Quorum met: {result.quorum_met}")
-    print(f"  Passed: {result.passed}\n")
+    log.info("Results (%d/%d responded):", result.responded, result.total)
+    log.info("  Average: %s/10", result.average_score)
+    log.info("  Verdict: %s", result.verdict)
+    log.info("  Quorum met: %s", result.quorum_met)
+    log.info("  Passed: %s", result.passed)
 
     for m in result.members:
         if m.error:
-            print(f"  [{m.role}] {m.model}: ERROR — {m.error}")
+            log.error("  [%s] %s: ERROR - %s", m.role, m.model, m.error)
         else:
-            print(f"  [{m.role}] {m.model}: {m.score}/10 ({m.verdict})")
+            log.info("  [%s] %s: %d/10 (%s)", m.role, m.model, m.score, m.verdict)
             if m.strengths:
-                print(f"    Strengths: {', '.join(m.strengths[:2])}")
+                log.info("    Strengths: %s", ", ".join(m.strengths[:2]))
             if m.concerns:
-                print(f"    Concerns: {', '.join(m.concerns[:2])}")
+                log.info("    Concerns: %s", ", ".join(m.concerns[:2]))
 
     sys.exit(0 if result.responded >= 3 else 1)
