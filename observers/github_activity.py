@@ -140,7 +140,7 @@ class GitHubActivityObserver(Observer):
             try:
                 return json.loads(sf.read_text())
             except Exception:
-                pass
+                log.debug("Failed to load state file", exc_info=True)
         return {
             "hmm_state": "sprint",
             "week_start": None,
@@ -351,7 +351,7 @@ class GitHubActivityObserver(Observer):
                     try:
                         findings[sev] += int(float(line.split()[-1]))
                     except (ValueError, IndexError):
-                        pass
+                        log.debug("Failed to parse severity value", exc_info=True)
 
         date_str = now.strftime("%Y-%m-%d")
         md = [
@@ -600,7 +600,7 @@ class GitHubActivityObserver(Observer):
                     winners[w] += 1
                 total += 1
             except (json.JSONDecodeError, AttributeError):
-                pass
+                log.debug("Failed to parse QA result file", exc_info=True)
 
         if total == 0:
             return None
@@ -986,7 +986,7 @@ if __name__ == "__main__":
 
     if "--simulate" in sys.argv:
         # Simulate 4 weeks of activity to preview the pattern
-        print("SIMULATING 4 WEEKS OF ACTIVITY\n")
+        log.info("SIMULATING 4 WEEKS OF ACTIVITY")
         state = observer._load_state()
         now = datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc)
         day_commits: dict[str, int] = {}
@@ -1014,30 +1014,30 @@ if __name__ == "__main__":
                 state["commits_this_week"] = 0
 
         for date_str, count in day_commits.items():
-            bar = "█" * count + "░" * (8 - count)
-            print(f"  {date_str}  {bar} {count}")
+            bar = "\u2588" * count + "\u2591" * (8 - count)
+            log.info("  %s  %s %d", date_str, bar, count)
 
         total = sum(day_commits.values())
         active_days = sum(1 for c in day_commits.values() if c > 0)
-        print(f"\n  Total: {total} commits over {active_days}/{len(day_commits)} active days")
-        print(f"  Average: {total/4:.1f}/week, {total/28:.1f}/day")
+        log.info("  Total: %d commits over %d/%d active days", total, active_days, len(day_commits))
+        log.info("  Average: %.1f/week, %.1f/day", total / 4, total / 28)
         sys.exit(0)
 
     if dry_run:
-        print("DRY RUN — will generate content but not commit")
+        log.info("DRY RUN -- will generate content but not commit")
     elif force:
-        print("FORCE — bypassing probability check")
+        log.info("FORCE -- bypassing probability check")
 
     result = observer.run(force=force, dry_run=dry_run)
 
     if result.data:
         for r in result.data.get("results", []):
-            print(f"\n  Repo: {r.get('repo')}")
-            print(f"  File: {r.get('file')}")
-            print(f"  Msg:  {r.get('message')}")
+            log.info("  Repo: %s", r.get("repo"))
+            log.info("  File: %s", r.get("file"))
+            log.info("  Msg:  %s", r.get("message"))
             if r.get("committed"):
-                print(f"  Push: GH={r.get('pushed_github')} Gitea={r.get('pushed_gitea')}")
+                log.info("  Push: GH=%s Gitea=%s", r.get("pushed_github"), r.get("pushed_gitea"))
             if r.get("error"):
-                print(f"  Error: {r['error']}", file=sys.stderr)
+                log.error("  Error: %s", r["error"])
     else:
-        print(result.message or "Skipped (probability check)")
+        log.info("%s", result.message or "Skipped (probability check)")
