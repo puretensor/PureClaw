@@ -112,7 +112,7 @@ class MorningBriefObserver(Observer):
                 try:
                     conn.logout()
                 except Exception:
-                    pass
+                    log.debug("IMAP logout failed", exc_info=True)
 
         if errors:
             log.warning("Email errors: %s", "; ".join(errors))
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     result = observer.run()
 
     if result.success:
-        print("Morning brief completed successfully.")
+        log.info("Morning brief completed successfully.")
     else:
-        print(f"Morning brief failed: {result.error}", file=sys.stderr)
+        log.error("Morning brief failed: %s", result.error)
         sys.exit(1)
