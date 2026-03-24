@@ -123,7 +123,7 @@ class IntelManualPublisher:
                 try:
                     all_results.extend(future.result())
                 except Exception:
-                    pass
+                    log.debug("intel_manual_publish: search future failed", exc_info=True)
 
         if not all_results:
             return ""
@@ -433,29 +433,28 @@ if __name__ == "__main__":
     else:
         source = args.text
 
-    print(f"[intel_manual_publish] Source text: {len(source)} characters")
-    print(f"[intel_manual_publish] Mode: {'dry-run' if args.dry_run else 'live deploy'}")
-    print()
+    log.info("intel_manual_publish: source text: %d characters", len(source))
+    log.info("intel_manual_publish: mode: %s", "dry-run" if args.dry_run else "live deploy")
 
     publisher = IntelManualPublisher()
     result = publisher.run(source, dry_run=args.dry_run)
 
-    print()
     if not result["passed"]:
-        print(f"REJECTED — Score: {result['score']:.1f}/10 (threshold: {COUNCIL_THRESHOLD})")
-        print(f"Council notes: {result['notes']}")
+        log.error("intel_manual_publish: REJECTED -- score: %.1f/10 (threshold: %s)",
+                  result["score"], COUNCIL_THRESHOLD)
+        log.error("intel_manual_publish: council notes: %s", result["notes"])
         _sys.exit(1)
 
-    print(f"PASSED — Council score: {result['score']:.1f}/10")
-    print(f"Notes: {result['notes']}")
+    log.info("intel_manual_publish: PASSED -- council score: %.1f/10", result["score"])
+    log.info("intel_manual_publish: notes: %s", result["notes"])
 
     if result.get("dry_run"):
-        print("\nDry-run previews:")
+        log.info("intel_manual_publish: dry-run previews:")
         for path in result.get("preview_paths", []):
-            print(f"  {path}")
-        print(f"\nElapsed: {result.get('elapsed', 0):.1f}s")
+            log.info("intel_manual_publish:   %s", path)
+        log.info("intel_manual_publish: elapsed: %.1fs", result.get("elapsed", 0))
     else:
-        print("\nDeployed URLs:")
+        log.info("intel_manual_publish: deployed URLs:")
         for url in result.get("urls", []):
-            print(f"  {url}")
-        print(f"\nElapsed: {result.get('elapsed', 0):.1f}s")
+            log.info("intel_manual_publish:   %s", url)
+        log.info("intel_manual_publish: elapsed: %.1fs", result.get("elapsed", 0))
