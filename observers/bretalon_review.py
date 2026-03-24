@@ -81,6 +81,7 @@ class BretalonReviewObserver(Observer):
             try:
                 return set(str(x) for x in json.loads(self.STATE_FILE.read_text()))
             except (json.JSONDecodeError, TypeError):
+                log.debug("Failed to parse bretalon review state file %s", self.STATE_FILE, exc_info=True)
                 return set()
         return set()
 
@@ -330,24 +331,23 @@ if __name__ == "__main__":
     obs = BretalonReviewObserver()
     now = datetime.now(timezone.utc)
 
-    print(f"[{now.strftime('%Y-%m-%d %H:%M UTC')}] "
-          f"Checking scheduled Bretalon articles...")
+    log.info("[%s] Checking scheduled Bretalon articles...", now.strftime('%Y-%m-%d %H:%M UTC'))
 
     if not obs.smtp_pass:
-        print("WARNING: BRETALON_SMTP_PASS not set. Set it or export the env var.")
+        log.warning("BRETALON_SMTP_PASS not set. Set it or export the env var.")
         sys.exit(1)
 
     try:
         posts = obs.get_scheduled_posts()
     except Exception as e:
-        print(f"ERROR fetching posts: {e}", file=sys.stderr)
+        log.error("ERROR fetching posts: %s", e)
         sys.exit(1)
 
     if not posts:
-        print("  No scheduled posts found.")
+        log.info("No scheduled posts found.")
         sys.exit(0)
 
-    print(f"  Found {len(posts)} scheduled post(s).")
+    log.info("Found %d scheduled post(s).", len(posts))
 
     sent_ids = obs._load_state()
     window_end = now + timedelta(hours=obs.SEND_WINDOW_HOURS)
@@ -359,35 +359,35 @@ if __name__ == "__main__":
         pub_utc = obs.wp_date_to_utc(pub_date)
 
         if pid in sent_ids and not args.force:
-            print(f"  [{pid}] Already emailed: {title[:60]}...")
+            log.info("[%s] Already emailed: %s", pid, title[:60])
             continue
 
         if pub_utc <= now:
-            print(f"  [{pid}] Already past publish date: {title[:60]}...")
+            log.info("[%s] Already past publish date: %s", pid, title[:60])
             continue
 
         if pub_utc > window_end and not args.force:
             hours_until = (pub_utc - now).total_seconds() / 3600
-            print(f"  [{pid}] Publishes in {hours_until:.0f}h, "
-                  f"outside {obs.SEND_WINDOW_HOURS}h window: {title[:60]}...")
+            log.info("[%s] Publishes in %.0fh, outside %dh window: %s",
+                     pid, hours_until, obs.SEND_WINDOW_HOURS, title[:60])
             continue
 
-        print(f"  [{pid}] SENDING review for: {title}")
+        log.info("[%s] SENDING review for: %s", pid, title)
         content = obs.get_post_content(pid)
         plain = obs.strip_gutenberg(content)
 
         if args.dry_run:
-            print(f"    [DRY RUN] Would send: [REVIEW] {title}")
-            print(f"    Word count: ~{obs.count_words(plain)}")
+            log.info("[DRY RUN] Would send: [REVIEW] %s", title)
+            log.info("[DRY RUN] Word count: ~%d", obs.count_words(plain))
             continue
 
         try:
             subj = obs.send_review_email(pid, title, pub_date, plain)
             sent_ids.add(pid)
             obs._save_state(sent_ids)
-            print(f"    Sent: {subj}")
-            print(f"    To: {', '.join(obs.recipients)}")
+            log.info("Sent: %s", subj)
+            log.info("To: %s", ", ".join(obs.recipients))
         except Exception as e:
-            print(f"    ERROR sending email for {pid}: {e}", file=sys.stderr)
+            log.error("ERROR sending email for %s: %s", pid, e)
 
-    print("Done.")
+    log.info("Done.")
