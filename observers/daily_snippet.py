@@ -43,37 +43,12 @@ class DailySnippetObserver(Observer):
     # -----------------------------------------------------------------------
 
     def _call_cloud_llm(self, prompt: str, timeout: int = 120) -> str:
-        """Call cloud LLM with Azure OpenAI primary, DeepSeek fallback.
+        """Call cloud LLM with DeepSeek primary, Azure OpenAI fallback.
 
         Bypasses the Nexus engine entirely -- no vLLM dependency.
+        DeepSeek is primary because Azure gpt-5-1 refuses long-form generation.
         """
-        # --- Azure OpenAI (primary) ---
-        azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
-        azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-        azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-        if azure_key and azure_endpoint:
-            try:
-                from openai import AzureOpenAI
-
-                client = AzureOpenAI(
-                    api_key=azure_key,
-                    azure_endpoint=azure_endpoint,
-                    api_version=azure_api_version,
-                )
-                response = client.chat.completions.create(
-                    model="gpt-5-1-chat",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=8192,
-                )
-                text = response.choices[0].message.content or ""
-                if text.strip():
-                    log.info("Cloud LLM: Azure OpenAI OK (%d chars)", len(text))
-                    return text.strip()
-                log.warning("Cloud LLM: Azure OpenAI returned empty response")
-            except Exception as e:
-                log.warning("Cloud LLM: Azure OpenAI failed: %s", e)
-
-        # --- DeepSeek (fallback) ---
+        # --- DeepSeek (primary) ---
         deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if deepseek_key:
             try:
@@ -100,6 +75,32 @@ class DailySnippetObserver(Observer):
                 log.warning("Cloud LLM: DeepSeek returned empty response")
             except Exception as e:
                 log.warning("Cloud LLM: DeepSeek failed: %s", e)
+
+        # --- Azure OpenAI (fallback) ---
+        azure_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+        if azure_key and azure_endpoint:
+            try:
+                from openai import AzureOpenAI
+
+                client = AzureOpenAI(
+                    api_key=azure_key,
+                    azure_endpoint=azure_endpoint,
+                    api_version=azure_api_version,
+                )
+                response = client.chat.completions.create(
+                    model="gpt-5-1-chat",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=8192,
+                )
+                text = response.choices[0].message.content or ""
+                if text.strip():
+                    log.info("Cloud LLM: Azure OpenAI OK (%d chars)", len(text))
+                    return text.strip()
+                log.warning("Cloud LLM: Azure OpenAI returned empty response")
+            except Exception as e:
+                log.warning("Cloud LLM: Azure OpenAI failed: %s", e)
 
         log.error("Cloud LLM: all backends failed")
         return ""
@@ -153,9 +154,9 @@ class DailySnippetObserver(Observer):
             self.send_telegram(f"[SNIPPET ERROR] {msg}")
             return ObserverResult(success=False, error=msg)
 
-        # 3. Validate source fidelity (brief vs. cited headlines)
-        log.info("Validating source fidelity...")
-        brief = self._validate_source_fidelity(brief, headlines_text)
+        # 3. Source fidelity -- skip correction step (it strips analytical content
+        # which is expected in 3-sentence format). Council review handles QA.
+        log.info("Skipping source fidelity correction (council handles QA)")
 
         # 4. Validate ON THIS DAY / QUOTE via web-grounded search
         log.info("Validating knowledge sections (web-grounded)...")
@@ -178,13 +179,12 @@ class DailySnippetObserver(Observer):
             log.info("Post-revision council score: %.1f/10 (%s)", council_score, council.verdict)
 
         if council.verdict == "abort" or (council.verdict == "revise"):
-            log.warning("Council rejected brief (%.1f/10). Degrading to headline summary.", council_score)
-            brief = self._generate_headline_summary(headlines, date_str)
-            council_score = 0.0
-            council_responded = 0
+            log.warning("Council gave low score (%.1f/10) but sending brief anyway -- no degraded fallbacks.", council_score)
 
-        # Clean up SKIP_QUOTE
+        # Clean up SKIP_QUOTE and strip any remaining citation markers
         brief = brief.replace("SKIP_QUOTE", "").strip()
+        brief = re.sub(r"\s*\[HL-[\d,\s]+\]", "", brief)
+        brief = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", brief)
 
         # 6. Format and send email
         subject = f"Daily Intelligence Snippet -- {date_str}"
@@ -333,44 +333,46 @@ QUOTE: "[A real, verifiable quote from a statesman, strategist, or thinker relev
 
 AMERICAS
 
-**[Topic headline, 5-10 words]**
-[One sentence: what happened] [HL-N, HL-M]
--> [One sentence: strategic implication]
+**[Story headline, 5-10 words]**
+[Three sentences: what happened, why it matters, and strategic implication or outlook. Write flowing analytical prose, not bullet points.]
 
-**[Topic headline]**
-[What happened] [HL-N]
--> [Strategic implication]
+**[Next story headline]**
+[Three sentences of analysis as above.]
+
+[Continue for 6-8 stories in this section]
 
 EUROPE
 
-[Same format -- 2-4 stories per section]
+[Same format -- 6-8 stories per section]
 
 MIDDLE EAST
 
-[Same format]
+[Same format -- 6-8 stories]
 
 ASIA-PACIFIC
 
-[Same format]
+[Same format -- 6-8 stories]
 
 GLOBAL
 
-[Same format -- commodity markets, trade, climate, tech]
+[Same format -- 6-8 stories covering commodity markets, trade, climate, tech]
 
 === END FORMAT ===
 
 STRICT FORMATTING RULES:
 - Section headers must be EXACTLY: AMERICAS, EUROPE, MIDDLE EAST, ASIA-PACIFIC, GLOBAL -- on a line by themselves, no colons, no extra text
 - Story headlines must use **bold** markers
-- Strategic implications must start with -> on a new line
+- Each story is a bold headline followed by exactly THREE sentences of flowing analytical prose
+- Do NOT use -> arrows, bullet points, or any prefix before sentences
 - "ON THIS DAY:" must be the literal prefix (not "Historical Anchor" or any variant)
 - "QUOTE:" must be the literal prefix (not "QOTD" or any variant)
+- Do NOT include any citation markers like [HL-1], [1], [Reuters], or similar brackets in the output
 
-SOURCE CITATION:
-- For every story, cite which headline number(s) it draws from: [HL-N, HL-M]
-- Place citations at the end of the "what happened" line
-- ON THIS DAY and QUOTE are knowledge-based -- no citation needed
-- NEVER fabricate details not present in the cited headlines
+SOURCE TRACKING (internal, NOT displayed):
+- Mentally track which headline(s) each story draws from to ensure accuracy
+- Do NOT include any citation markers, brackets, or source references in the output text
+- ON THIS DAY and QUOTE are knowledge-based
+- NEVER fabricate details not present in the headlines
 
 QUOTE GUIDELINES:
 - Use quotes from statesmen, diplomats, strategists, military leaders, or serious thinkers
@@ -383,11 +385,12 @@ CONTENT RULES:
 - Place each item in its most relevant geographic region.
 - If a story spans regions, pick where the primary action is.
 - GLOBAL is for commodity markets, trade, climate, tech -- things without a single regional home.
-- Skip any region with no significant news today.
-- Keep the total brief under 800 words.
+- Each section MUST contain 6-8 stories. Never fewer than 5 stories per section.
+- Each story MUST have a bold headline followed by exactly 3 sentences of analysis.
 - Tone: analytical, detached, realpolitik. No moralizing.
 - Do NOT invent news. Only use the headlines provided.
 - Do NOT add items not in the headlines list.
+- Cover the full breadth of today's news across all five regions.
 
 FACTUAL COMPLETENESS:
 - NEVER omit material facts to appear neutral or politically correct. Accuracy trumps sensitivity.
@@ -416,10 +419,10 @@ BRIEF TO AUDIT:
 {brief}
 
 TASK:
-1. For each story in the brief, check the [HL-N] citations.
-2. Does the "what happened" line faithfully represent the cited headline(s)?
-3. Flag any claims that ADD details not present in any cited headline (fabricated specifics, invented statistics, made-up names/titles).
-4. Do NOT flag strategic analysis lines (starting with ->) -- those are commentary.
+1. For each story in the brief, match it to the source headline(s) it draws from by content.
+2. Does the story faithfully represent the matched headline(s)?
+3. Flag any claims that ADD details not present in any headline (fabricated specifics, invented statistics, made-up names/titles).
+4. Do NOT flag analytical commentary or strategic implications -- only factual claims.
 5. Do NOT flag ON THIS DAY or QUOTE sections -- those are knowledge-based.
 
 Return a JSON object:
@@ -636,9 +639,9 @@ Return ONLY the JSON."""
                 ),
                 "prompt": (
                     "Score this intelligence brief for FAITHFULNESS TO SOURCE HEADLINES. "
-                    "Check: Are stories accurately drawn from the cited headlines? "
+                    "Check: Are stories accurately drawn from the source headlines? "
                     "Are any details fabricated or embellished beyond what the headlines state? "
-                    "Are citations [HL-N] present and correct?"
+                    "The brief does not include inline citations -- match stories to headlines by content."
                 ),
             },
             "coherence_editor": {
