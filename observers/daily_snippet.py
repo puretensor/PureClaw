@@ -13,11 +13,13 @@ Architecture: Generate (with citations) -> Source validation -> Web-grounded ver
 Fallback: If council rejects, degrades to headline summary (no analysis).
 """
 
+import base64
 import json
 import logging
 import os
 import re
 import smtplib
+import sys
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -872,35 +874,70 @@ Rules:
     # -----------------------------------------------------------------------
 
     def send_email(self, subject: str, html_content: str, plain_text: str) -> bool:
-        """Send HTML email via SMTP. Config from environment variables."""
-        host = os.environ.get("SNIPPET_SMTP_HOST", "")
-        port = int(os.environ.get("SNIPPET_SMTP_PORT", "587"))
-        user = os.environ.get("SNIPPET_SMTP_USER", "")
-        password = os.environ.get("SNIPPET_SMTP_PASS", "")
-        from_addr = os.environ.get("SNIPPET_FROM", user)
+        """Send HTML email via Gmail API (OAuth) with SMTP fallback.
+
+        Primary: Uses gmail.py OAuth token for hal@puretensor.ai (no app password needed).
+        Fallback: Raw SMTP if Gmail API unavailable.
+        """
+        from_addr = os.environ.get("SNIPPET_FROM", "hal@puretensor.ai")
         to_addrs = [
             a.strip()
             for a in os.environ.get("SNIPPET_TO", "").split(",")
             if a.strip()
         ]
 
-        if not user or not password or not to_addrs:
-            log.error("SMTP not configured -- set SNIPPET_SMTP_* env vars")
+        if not to_addrs:
+            log.error("No recipients configured -- set SNIPPET_TO env var")
             return False
 
+        # Build MIME message
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = from_addr
+        msg["From"] = f"HAL <{from_addr}>"
         msg["To"] = ", ".join(to_addrs)
-
         msg.attach(MIMEText(plain_text, "plain", "utf-8"))
         msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+        # Primary: Gmail API via OAuth
+        try:
+            gmail_py = os.path.expanduser("~/.config/puretensor/gmail.py")
+            if os.path.exists(gmail_py):
+                config_dir = os.path.dirname(gmail_py)
+                if config_dir not in sys.path:
+                    sys.path.insert(0, config_dir)
+
+                # Import gmail module's credential and service helpers
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("gmail_tool", gmail_py)
+                gmail_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(gmail_mod)
+
+                service = gmail_mod.get_service("hal")
+                raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+                result = service.users().messages().send(
+                    userId="me", body={"raw": raw_msg}
+                ).execute()
+                log.info("Sent via Gmail API (OAuth): message ID %s", result.get("id"))
+                return True
+        except Exception as e:
+            log.warning("Gmail API send failed (%s), falling back to SMTP", e)
+
+        # Fallback: raw SMTP
+        host = os.environ.get("SNIPPET_SMTP_HOST", "")
+        port = int(os.environ.get("SNIPPET_SMTP_PORT", "587"))
+        user = os.environ.get("SNIPPET_SMTP_USER", "")
+        password = os.environ.get("SNIPPET_SMTP_PASS", "")
+
+        if not host or not user or not password:
+            log.error("SMTP fallback not configured -- set SNIPPET_SMTP_* env vars")
+            return False
 
         try:
             with smtplib.SMTP(host, port) as server:
                 server.starttls()
                 server.login(user, password)
                 server.sendmail(from_addr, to_addrs, msg.as_string())
+            log.info("Sent via SMTP fallback")
             return True
         except Exception as e:
             log.error("SMTP error: %s", e)
