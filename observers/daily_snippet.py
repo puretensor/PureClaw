@@ -684,6 +684,21 @@ Return ONLY the JSON."""
                     "Are there any logical gaps or unsupported assertions?"
                 ),
             },
+            "knowledge_verifier": {
+                "model": "glm5",
+                "system": (
+                    "You are a knowledge verification specialist with deep expertise in "
+                    "international affairs, economics, and geopolitics. You cross-reference "
+                    "factual claims against your training data and flag unsupported assertions."
+                ),
+                "prompt": (
+                    "Score this intelligence brief for FACTUAL KNOWLEDGE ACCURACY. "
+                    "Check: Are named entities and their roles/titles correct? "
+                    "Are dates, timelines, and statistics accurate? "
+                    "Are causal claims and geopolitical relationships correctly stated? "
+                    "Flag anything that seems fabricated, outdated, or factually dubious."
+                ),
+            },
         }
 
         result = run_council(
