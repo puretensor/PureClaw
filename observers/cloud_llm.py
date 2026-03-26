@@ -139,6 +139,19 @@ def call_bedrock_sonnet(system_prompt: str, user_prompt: str, timeout: int = 60,
     return response["output"]["message"]["content"][0]["text"].strip()
 
 
+def call_bedrock_glm5(system_prompt: str, user_prompt: str, timeout: int = 60,
+                      temperature: float = 0.3) -> str:
+    """Call GLM 5 (Zhipu AI) via AWS Bedrock. Returns text content."""
+    client = _get_bedrock_client()
+    response = client.converse(
+        modelId="zai.glm-5",
+        messages=[{"role": "user", "content": [{"text": user_prompt}]}],
+        system=[{"text": system_prompt}],
+        inferenceConfig={"temperature": temperature, "maxTokens": 4096},
+    )
+    return response["output"]["message"]["content"][0]["text"].strip()
+
+
 # Backward-compatible alias
 call_claude_haiku = call_azure_openai
 

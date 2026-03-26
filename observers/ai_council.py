@@ -38,6 +38,7 @@ if _nexus_root not in _sys.path:
     _sys.path.insert(0, _nexus_root)
 
 from observers.cloud_llm import (
+    call_bedrock_glm5,
     call_bedrock_sonnet,
     call_deepseek,
     call_gemini_flash,
@@ -53,6 +54,7 @@ MODEL_CALLERS = {
     "gemini": call_gemini_flash,
     "grok": call_xai_grok,
     "deepseek": call_deepseek,
+    "glm5": call_bedrock_glm5,
 }
 
 # JSON schema instruction appended to every council prompt
@@ -200,7 +202,7 @@ def run_council(
     total = len(roles)
     members = []
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
             pool.submit(_call_member, role, config, content, timeout): role
             for role, config in roles.items()
@@ -293,6 +295,11 @@ if __name__ == "__main__":
             "model": "deepseek",
             "system": "You are a devil's advocate looking for logical flaws.",
             "prompt": "Score this text for logical rigour and missing perspectives.",
+        },
+        "knowledge_verifier": {
+            "model": "glm5",
+            "system": "You are a knowledge verification specialist.",
+            "prompt": "Score this text for factual accuracy of named entities, dates, and figures.",
         },
     }
 
