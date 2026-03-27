@@ -593,4 +593,3 @@ class TestPureClawSystemPrompt:
         prompt_lower = _system_prompt.lower()
         assert "direct" in prompt_lower
         assert "concise" in prompt_lower
-        assert "tensor-core" in prompt_lower

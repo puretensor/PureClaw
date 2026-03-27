@@ -299,7 +299,7 @@ class TestOllamaBackend:
             req = mock_urlopen.call_args[0][0]
             payload = json.loads(req.data.decode())
             assert "tools" in payload
-            assert len(payload["tools"]) == 19
+            assert len(payload["tools"]) == 20
 
     def test_call_sync_no_tools_when_disabled(self):
         """call_sync should not include tools when disabled."""

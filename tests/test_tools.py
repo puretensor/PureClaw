@@ -35,8 +35,8 @@ with patch.dict("os.environ", {
 
 class TestToolSchemas:
 
-    def test_nineteen_tools_defined(self):
-        assert len(TOOL_SCHEMAS) == 19
+    def test_twenty_tools_defined(self):
+        assert len(TOOL_SCHEMAS) == 20
 
     def test_all_have_function_format(self):
         for schema in TOOL_SCHEMAS:
@@ -51,7 +51,7 @@ class TestToolSchemas:
         assert names == {
             "bash", "read_file", "write_file", "edit_file",
             "glob", "grep", "web_search", "web_fetch", "make_phone_call", "einherjar_dispatch",
-            "enter_plan_mode", "exit_plan_mode", "spawn_subagent",
+            "claw_dispatch", "enter_plan_mode", "exit_plan_mode", "spawn_subagent",
             "create_task", "update_task", "list_tasks",
             "save_memory", "read_memory", "list_memory",
         }
@@ -69,6 +69,7 @@ class TestToolSchemas:
             "web_fetch": ["url"],
             "make_phone_call": ["phone_number", "purpose"],
             "einherjar_dispatch": ["task"],
+            "claw_dispatch": ["claw", "task"],
             "enter_plan_mode": ["reason"],
             "exit_plan_mode": ["plan_summary"],
             "spawn_subagent": ["task"],
