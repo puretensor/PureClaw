@@ -106,7 +106,7 @@ class TestSaveMemory:
     def test_creates_header(self, use_tmp_memory):
         save_memory("first entry")
         content = (use_tmp_memory / "MEMORY.md").read_text()
-        assert content.startswith("# HAL Memory")
+        assert content.startswith(f"# {AGENT_NAME} Memory")
 
     def test_appends_to_existing(self, use_tmp_memory):
         save_memory("first")
@@ -362,7 +362,7 @@ class TestGetMemoriesForInjection:
     def test_includes_header(self, use_tmp_memory):
         save_memory("test")
         output = get_memories_for_injection()
-        assert "# HAL Memory" in output
+        assert f"# {AGENT_NAME} Memory" in output
 
     def test_includes_context(self, use_tmp_memory):
         use_tmp_memory.mkdir(parents=True, exist_ok=True)
