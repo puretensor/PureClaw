@@ -44,3 +44,21 @@ Thumbs.db
 
 # Claude CLI binary
 claude-bin/
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+
+# Logs
+*.log
+logs/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Runtime
+*.pid
+*.sock

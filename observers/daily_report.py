@@ -133,7 +133,7 @@ class DailyReport:
         self._pdf.ln(8)
         self._pdf.set_font("DejaVu", "B", 18)
         self._pdf.set_text_color(*DARK_BLUE)
-        self._pdf.cell(0, 11, text, ln=True)
+        self._pdf.multi_cell(0, 11, text)
         self._pdf.set_draw_color(*ACCENT_BLUE)
         self._pdf.set_line_width(0.8)
         self._pdf.line(10, self._pdf.get_y() + 1, 200, self._pdf.get_y() + 1)
@@ -255,7 +255,7 @@ class DailyReport:
         if subtitle:
             self._pdf.set_font("DejaVu", "I", 13)
             self._pdf.set_text_color(*META_GREY)
-            self._pdf.cell(0, 8, subtitle, align="C", ln=True)
+            self._pdf.multi_cell(0, 8, subtitle, align="C")
         self._pdf.ln(30)
 
         # Stats + meta
