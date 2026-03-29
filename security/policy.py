@@ -307,6 +307,11 @@ class PolicyWatcher:
                             global _current_policy
                             _current_policy = old_policy
                         else:
+                            try:
+                                from security.redact import invalidate_cache
+                                invalidate_cache()
+                            except Exception as cache_err:
+                                log.warning("Failed to invalidate redaction cache: %s", cache_err)
                             self._last_hash = current_hash
                             log.info("Policy reloaded: v%d -> v%d", old_policy.version, new_policy.version)
                     except Exception as e:

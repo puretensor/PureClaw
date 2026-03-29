@@ -136,6 +136,7 @@ class OllamaBackend:
         timeout: int = 300,
         system_prompt: str | None = None,
         memory_context: str | None = None,
+        tool_context=None,
     ) -> dict:
         """Synchronous call to Ollama /api/chat with optional tool loop."""
         model_id = self._resolve_model(model)
@@ -236,7 +237,11 @@ class OllamaBackend:
 
                 log.info("Ollama tool call [sync]: %s(%s)", name, str(args)[:100])
                 result_str, new_files = execute_tool(
-                    name, args, timeout=self._tool_timeout, cwd=self._cwd
+                    name,
+                    args,
+                    timeout=self._tool_timeout,
+                    cwd=self._cwd,
+                    tool_context=tool_context,
                 )
                 written_files.extend(new_files)
 
@@ -263,6 +268,7 @@ class OllamaBackend:
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
+        tool_context=None,
     ) -> dict:
         """Async streaming call to Ollama /api/chat with tool loop."""
         import asyncio
@@ -333,7 +339,11 @@ class OllamaBackend:
                     result_str, new_files = await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda n=name, a=args: execute_tool(
-                            n, a, timeout=self._tool_timeout, cwd=self._cwd
+                            n,
+                            a,
+                            timeout=self._tool_timeout,
+                            cwd=self._cwd,
+                            tool_context=tool_context,
                         ),
                     )
                     written_files.extend(new_files)
@@ -387,9 +397,16 @@ class OllamaBackend:
         """Stream using aiohttp for true async."""
         import aiohttp
 
+        try:
+            from security.redact import redact_history
+
+            api_messages = redact_history(messages)
+        except Exception:
+            api_messages = messages
+
         payload = {
             "model": model_id,
-            "messages": messages,
+            "messages": api_messages,
             "stream": True,
             "options": self._get_options(),
         }
@@ -450,9 +467,16 @@ class OllamaBackend:
         tools: list[dict] | None,
     ) -> tuple[dict, list[dict] | None]:
         """Fallback: synchronous streaming (no real-time editor updates)."""
+        try:
+            from security.redact import redact_history
+
+            api_messages = redact_history(messages)
+        except Exception:
+            api_messages = messages
+
         payload = {
             "model": model_id,
-            "messages": messages,
+            "messages": api_messages,
             "stream": True,
             "options": self._get_options(),
         }

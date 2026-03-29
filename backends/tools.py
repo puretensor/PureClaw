@@ -33,6 +33,18 @@ import threading
 # Thread-local context for plan mode (safe for concurrent conversations)
 _tool_context = threading.local()
 
+
+@dataclass
+class ToolExecutionContext:
+    """Per-request tool execution context."""
+
+    plan_mode: bool = False
+    is_subagent: bool = False
+    policy_profile: str = "admin"
+    session_id: str | None = None
+    channel: str | None = None
+
+
 def is_plan_mode() -> bool:
     """Check if current thread is in plan mode."""
     return getattr(_tool_context, "plan_mode", False)
@@ -43,6 +55,17 @@ def set_plan_mode(active: bool):
 
 # Tools that are blocked in plan mode
 _WRITE_TOOLS = frozenset({"bash", "write_file", "edit_file"})
+_TOOL_PROFILES: dict[str, frozenset[str] | None] = {
+    "admin": None,
+    "read_only": frozenset({
+        "read_file", "glob", "grep", "web_search", "web_fetch",
+        "enter_plan_mode", "exit_plan_mode", "read_memory", "list_memory", "list_tasks",
+    }),
+    "reply_only": frozenset({
+        "read_file", "glob", "grep", "web_search", "web_fetch",
+        "enter_plan_mode", "exit_plan_mode", "read_memory", "list_memory",
+    }),
+}
 
 # Max chars returned from any single tool execution
 MAX_OUTPUT_CHARS = 32000
@@ -516,7 +539,7 @@ def _truncate(text: str, max_chars: int = MAX_OUTPUT_CHARS) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _exec_bash(args: dict, *, timeout: int = 120, cwd: str | None = None) -> tuple[str, list[str]]:
+def _exec_bash(args: dict, *, timeout: int = 120, cwd: str | None = None, **_kwargs) -> tuple[str, list[str]]:
     """Execute a shell command. Returns (output, written_files)."""
     command = args.get("command", "")
     if not command:
@@ -850,12 +873,26 @@ def _exec_web_fetch(args: dict, **_kwargs) -> tuple[str, list[str]]:
     log.info("Tool web_fetch: %s", url[:120])
 
     try:
+        from security.network import check_url_access
+
+        allowed, reason = check_url_access(url)
+        if not allowed:
+            return f"Error: {reason}", []
+
+        class _PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                ok, why = check_url_access(newurl)
+                if not ok:
+                    raise urllib.error.URLError(f"redirect blocked: {why}")
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
         }
         headers.update(custom_headers)
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        opener = urllib.request.build_opener(_PolicyRedirectHandler)
+        with opener.open(req, timeout=30) as resp:
             raw = resp.read(max_bytes)
             content_type = resp.headers.get("Content-Type", "")
 
@@ -1030,10 +1067,12 @@ def _exec_make_phone_call(args: dict, **_kwargs) -> tuple[str, list[str]]:
     return _truncate("\n".join(output_lines)), []
 
 
-def _exec_enter_plan_mode(args: dict, **_kwargs) -> tuple[str, list[str]]:
+def _exec_enter_plan_mode(args: dict, tool_context: ToolExecutionContext | None = None, **_kwargs) -> tuple[str, list[str]]:
     """Switch to plan mode (read-only tools)."""
     reason = args.get("reason", "")
     set_plan_mode(True)
+    if tool_context:
+        tool_context.plan_mode = True
     return (
         f"Plan mode activated. Reason: {reason}\n\n"
         "READ-ONLY mode: read_file, glob, grep, web_search, web_fetch available.\n"
@@ -1043,10 +1082,12 @@ def _exec_enter_plan_mode(args: dict, **_kwargs) -> tuple[str, list[str]]:
     )
 
 
-def _exec_exit_plan_mode(args: dict, **_kwargs) -> tuple[str, list[str]]:
+def _exec_exit_plan_mode(args: dict, tool_context: ToolExecutionContext | None = None, **_kwargs) -> tuple[str, list[str]]:
     """Exit plan mode, restore full execution."""
     plan_summary = args.get("plan_summary", "")
     set_plan_mode(False)
+    if tool_context:
+        tool_context.plan_mode = False
     return (
         f"Execution mode restored. Plan: {plan_summary}\n\n"
         "All tools now available. Proceed with implementation.",
@@ -1106,13 +1147,13 @@ def _get_subagent_memory() -> str | None:
     return _SUBAGENT_MEMORY_CACHE
 
 
-def _exec_spawn_subagent(args: dict, **_kwargs) -> tuple[str, list[str]]:
+def _exec_spawn_subagent(args: dict, tool_context: ToolExecutionContext | None = None, **_kwargs) -> tuple[str, list[str]]:
     """Spawn a subagent with its own conversation via configured backend."""
     task = args.get("task", "").strip()
     if not task:
         return "Error: no task provided", []
 
-    if getattr(_tool_context, "is_subagent", False):
+    if getattr(_tool_context, "is_subagent", False) or getattr(tool_context, "is_subagent", False):
         return "Error: subagents cannot spawn further subagents", []
 
     requested_tools = args.get("tools") or _SUBAGENT_DEFAULT_TOOLS
@@ -1185,6 +1226,7 @@ def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
             system_prompt=system_prompt,
             memory_context=memory_ctx,
             timeout=_SUBAGENT_TIMEOUT,
+            tool_context=ToolExecutionContext(is_subagent=True),
         )
         return result.get("result", "(no result)")
     finally:
@@ -1331,6 +1373,31 @@ _EXECUTORS = {
 }
 
 
+def _current_tool_context(
+    *,
+    session_id: str | None = None,
+    channel: str | None = None,
+    policy_profile: str | None = None,
+) -> ToolExecutionContext:
+    """Build a context snapshot from thread-local state."""
+    return ToolExecutionContext(
+        plan_mode=getattr(_tool_context, "plan_mode", False),
+        is_subagent=getattr(_tool_context, "is_subagent", False),
+        policy_profile=policy_profile or getattr(_tool_context, "policy_profile", "admin"),
+        session_id=session_id or getattr(_tool_context, "session_id", None),
+        channel=channel or getattr(_tool_context, "channel", None),
+    )
+
+
+def _check_tool_profile(name: str, profile: str) -> tuple[bool, str]:
+    allowed = _TOOL_PROFILES.get(profile, _TOOL_PROFILES["admin"])
+    if allowed is None:
+        return False, ""
+    if name in allowed:
+        return False, ""
+    return True, f"Tool '{name}' is blocked for policy profile '{profile}'"
+
+
 def execute_tool(
     name: str,
     args: dict,
@@ -1339,6 +1406,7 @@ def execute_tool(
     cwd: str | None = None,
     session_id: str | None = None,
     channel: str | None = None,
+    tool_context: ToolExecutionContext | None = None,
 ) -> tuple[str, list[str]]:
     """Execute a tool by name. Returns (result_string, written_files).
 
@@ -1352,31 +1420,44 @@ def execute_tool(
     """
     t0 = time.monotonic()
 
+    ctx = tool_context or _current_tool_context(session_id=session_id, channel=channel)
+    ctx.session_id = ctx.session_id or session_id
+    ctx.channel = ctx.channel or channel
+
     # Plan mode enforcement
-    if is_plan_mode() and name in _WRITE_TOOLS:
-        _audit_tool(session_id, channel, name, args, "blocked by plan mode", 0, "deny", "plan_mode")
+    if ctx.plan_mode and name in _WRITE_TOOLS:
+        _audit_tool(ctx.session_id, ctx.channel, name, args, "blocked by plan mode", 0, "deny", "plan_mode")
         return (
             f"Error: '{name}' is blocked in plan mode. "
             "Use read-only tools or call exit_plan_mode first.",
             [],
         )
 
+    denied, deny_reason = _check_tool_profile(name, ctx.policy_profile)
+    if denied:
+        _audit_tool(ctx.session_id, ctx.channel, name, args, deny_reason, 0, "deny", "tool_profile")
+        return f"Error: {deny_reason}", []
+
     # --- Security policy enforcement ---
     try:
         denied, deny_reason = _check_security_policy(name, args)
         if denied:
             duration = int((time.monotonic() - t0) * 1000)
-            _audit_tool(session_id, channel, name, args, deny_reason, duration, "deny", deny_reason)
+            _audit_tool(ctx.session_id, ctx.channel, name, args, deny_reason, duration, "deny", deny_reason)
             return f"Error: {deny_reason}", []
     except Exception as e:
-        log.debug("Security policy check error (non-fatal, allowing): %s", e)
+        duration = int((time.monotonic() - t0) * 1000)
+        deny_reason = f"Security policy evaluation failed: {e}"
+        log.warning("%s", deny_reason)
+        _audit_tool(ctx.session_id, ctx.channel, name, args, deny_reason, duration, "deny", "policy_error")
+        return f"Error: {deny_reason}", []
 
     executor = _EXECUTORS.get(name)
     if executor is None:
         return f"Error: unknown tool '{name}'", []
 
     try:
-        result_str, written = executor(args, timeout=timeout, cwd=cwd)
+        result_str, written = executor(args, timeout=timeout, cwd=cwd, tool_context=ctx)
 
         # Redact credentials from tool output
         try:
@@ -1386,18 +1467,18 @@ def execute_tool(
             pass
 
         duration = int((time.monotonic() - t0) * 1000)
-        _audit_tool(session_id, channel, name, args, result_str, duration, "allow", None)
+        _audit_tool(ctx.session_id, ctx.channel, name, args, result_str, duration, "allow", None)
         return result_str, written
     except Exception as e:
         log.error("Tool %s execution error: %s", name, e)
         duration = int((time.monotonic() - t0) * 1000)
-        _audit_tool(session_id, channel, name, args, str(e), duration, "error", None)
+        _audit_tool(ctx.session_id, ctx.channel, name, args, str(e), duration, "error", None)
         return f"Error executing {name}: {e}", []
 
 
 def _check_security_policy(name: str, args: dict) -> tuple[bool, str]:
     """Check tool call against security policy. Returns (denied, reason)."""
-    from security.policy import get_policy, matches_glob
+    from security.policy import get_policy
 
     policy = get_policy()
 
@@ -1432,7 +1513,7 @@ def _check_security_policy(name: str, args: dict) -> tuple[bool, str]:
             if not allowed:
                 return True, reason
 
-    # Network checks for web_fetch
+    # Network checks for outbound HTTP / remote dispatch tools
     elif name == "web_fetch":
         url = args.get("url", "")
         if url:
@@ -1440,6 +1521,38 @@ def _check_security_policy(name: str, args: dict) -> tuple[bool, str]:
             allowed, reason = check_url_access(url)
             if not allowed:
                 return True, reason
+    elif name == "web_search":
+        from security.network import check_url_access
+        searxng_url = os.environ.get("SEARXNG_URL", "")
+        search_url = searxng_url or "https://html.duckduckgo.com/html/"
+        allowed, reason = check_url_access(search_url)
+        if not allowed:
+            return True, f"web_search blocked: {reason}"
+    elif name == "make_phone_call":
+        from security.network import check_url_access
+        phone_url = os.environ.get("HAL_PHONE_URL", "http://localhost:5590")
+        allowed, reason = check_url_access(phone_url)
+        if not allowed:
+            return True, f"make_phone_call blocked: {reason}"
+    elif name == "einherjar_dispatch":
+        from security.network import check_url_access
+        svc_url = os.environ.get("EINHERJAR_URL", "http://einherjar.einherjar.svc.cluster.local:8080")
+        allowed, reason = check_url_access(svc_url)
+        if not allowed:
+            return True, f"einherjar_dispatch blocked: {reason}"
+    elif name == "claw_dispatch":
+        from config import CLAW_MESH_PEERS, CLAW_ID
+        from mesh.registry import ClawRegistry
+        from security.network import check_url_access
+
+        claw_id = args.get("claw", "").strip()
+        registry = ClawRegistry(CLAW_MESH_PEERS, CLAW_ID)
+        peer_url = registry.get_peer_url(claw_id)
+        if not peer_url:
+            return True, f"Unknown peer: {claw_id}"
+        allowed, reason = check_url_access(peer_url)
+        if not allowed:
+            return True, f"claw_dispatch blocked: {reason}"
 
     return False, ""
 
@@ -1531,6 +1644,7 @@ def run_tool_loop_sync(
     tool_timeout: int = 30,
     total_timeout: int = 300,
     cwd: str | None = None,
+    tool_context: ToolExecutionContext | None = None,
 ) -> dict:
     """Generic synchronous tool loop.
 
@@ -1555,6 +1669,7 @@ def run_tool_loop_sync(
     last_text = ""
     start = time.time()
     recent_calls: list[str] = []
+    tool_context = tool_context or _current_tool_context()
 
     for iteration in range(max_iterations):
         if time.time() - start > total_timeout:
@@ -1585,7 +1700,13 @@ def run_tool_loop_sync(
         for tc in tool_calls:
             log.info("Tool call [sync]: %s(%s)", tc.name, str(tc.arguments)[:100])
             result_str, new_files = execute_tool(
-                tc.name, tc.arguments, timeout=tool_timeout, cwd=cwd,
+                tc.name,
+                tc.arguments,
+                timeout=tool_timeout,
+                cwd=cwd,
+                session_id=tool_context.session_id,
+                channel=tool_context.channel,
+                tool_context=tool_context,
             )
             written_files.extend(new_files)
             messages.append(format_tool_result(tc.name, tc.id, result_str))
@@ -1619,6 +1740,7 @@ async def run_tool_loop_async(
     streaming_editor=None,
     on_progress=None,
     send_and_parse_stream=None,
+    tool_context: ToolExecutionContext | None = None,
 ) -> dict:
     """Generic async tool loop with tool status updates.
 
@@ -1638,6 +1760,7 @@ async def run_tool_loop_async(
     last_text = ""
     start = time.time()
     recent_calls: list[str] = []
+    tool_context = tool_context or _current_tool_context()
 
     for iteration in range(max_iterations):
         if time.time() - start > total_timeout:
@@ -1687,7 +1810,13 @@ async def run_tool_loop_async(
                 loop.run_in_executor(
                     None,
                     lambda n=tc.name, a=tc.arguments: execute_tool(
-                        n, a, timeout=_SUBAGENT_TIMEOUT, cwd=cwd,
+                        n,
+                        a,
+                        timeout=_SUBAGENT_TIMEOUT,
+                        cwd=cwd,
+                        session_id=tool_context.session_id,
+                        channel=tool_context.channel,
+                        tool_context=tool_context,
                     ),
                 )
                 for tc in tool_calls
@@ -1712,7 +1841,13 @@ async def run_tool_loop_async(
                 result_str, new_files = await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda n=tc.name, a=tc.arguments: execute_tool(
-                        n, a, timeout=tool_timeout, cwd=cwd,
+                        n,
+                        a,
+                        timeout=tool_timeout,
+                        cwd=cwd,
+                        session_id=tool_context.session_id,
+                        channel=tool_context.channel,
+                        tool_context=tool_context,
                     ),
                 )
                 written_files.extend(new_files)

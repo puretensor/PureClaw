@@ -10,6 +10,7 @@ CLI flags verified against `codex exec --help` / `codex exec resume --help`.
 import asyncio
 import json
 import logging
+import os
 import subprocess
 
 log = logging.getLogger("nexus")
@@ -32,9 +33,8 @@ class CodexCLIBackend:
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
-    ) -> None:
+    ) -> str:
         """Write instructions to AGENTS.md in CWD before each Codex call."""
-        import os
         parts = []
         if system_prompt:
             parts.append(system_prompt)
@@ -49,6 +49,47 @@ class CodexCLIBackend:
         content = "\n\n".join(parts) if parts else ""
         with open(agents_path, "w") as f:
             f.write(content)
+        return agents_path
+
+    def _run_with_instructions(
+        self,
+        runner,
+        system_prompt: str | None = None,
+        memory_context: str | None = None,
+        extra_system_prompt: str | None = None,
+    ):
+        """Temporarily write AGENTS.md for a single Codex invocation."""
+        from config import CODEX_CWD
+
+        cwd = CODEX_CWD or "/app"
+        agents_path = os.path.join(cwd, "AGENTS.md")
+        had_existing = os.path.exists(agents_path)
+        previous = ""
+        if had_existing:
+            try:
+                with open(agents_path, "r") as f:
+                    previous = f.read()
+            except Exception:
+                previous = ""
+
+        if extra_system_prompt is None:
+            self._write_instructions(system_prompt, memory_context)
+        else:
+            if extra_system_prompt is None:
+                self._write_instructions(system_prompt, memory_context)
+            else:
+                self._write_instructions(system_prompt, memory_context, extra_system_prompt)
+        try:
+            return runner()
+        finally:
+            try:
+                if had_existing:
+                    with open(agents_path, "w") as f:
+                        f.write(previous)
+                else:
+                    os.unlink(agents_path)
+            except FileNotFoundError:
+                pass
 
     def _build_cmd(
         self,
@@ -106,20 +147,22 @@ class CodexCLIBackend:
         timeout: int = 300,
         system_prompt: str | None = None,
         memory_context: str | None = None,
+        tool_context=None,
     ) -> dict:
         """Synchronous Codex CLI call.
 
         Returns {"result": str, "session_id": str | None}
         """
-        self._write_instructions(system_prompt, memory_context)
         cmd = self._build_cmd(prompt, session_id=session_id)
 
         mode = "resume" if session_id else "new"
         log.info("Codex CLI (sync, %s): %s", mode, " ".join(cmd[:6]) + " ...")
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout,
+            result = self._run_with_instructions(
+                lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=timeout),
+                system_prompt,
+                memory_context,
             )
         except FileNotFoundError:
             return {
@@ -148,73 +191,97 @@ class CodexCLIBackend:
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
+        tool_context=None,
     ) -> dict:
         """Async streaming Codex CLI call.
 
         Returns {"result": str, "session_id": str | None, "written_files": list}
         """
-        self._write_instructions(system_prompt, memory_context, extra_system_prompt)
         cmd = self._build_cmd(message, session_id=session_id)
 
         mode = "resume" if session_id else "new"
         log.info("Codex CLI (streaming, %s): %s", mode, " ".join(cmd[:6]) + " ...")
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                limit=10 * 1024 * 1024,
-            )
-        except FileNotFoundError:
-            return {
-                "result": f"Codex CLI not found at {self._bin}. Install it first.",
-                "session_id": None,
-                "written_files": [],
-            }
+        from config import CODEX_CWD
 
+        cwd = CODEX_CWD or "/app"
+        agents_path = os.path.join(cwd, "AGENTS.md")
+        had_existing = os.path.exists(agents_path)
+        previous = ""
+        if had_existing:
+            try:
+                with open(agents_path, "r") as f:
+                    previous = f.read()
+            except Exception:
+                previous = ""
         try:
-            data = await asyncio.wait_for(
-                _read_codex_stream(
-                    proc,
-                    on_progress=on_progress,
-                    streaming_editor=streaming_editor,
-                    fallback_session_id=session_id,
-                ),
-                timeout=1800,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            raise TimeoutError("Codex CLI timed out after 1800s")
-        except RuntimeError as e:
-            await proc.wait()
-            stderr_bytes = await proc.stderr.read() if proc.stderr else b""
-            err = stderr_bytes.decode().strip()
-            log.warning("Codex CLI stream empty, stderr: %s", err[:500])
-            if "401" in err or "Unauthorized" in err:
+            self._write_instructions(system_prompt, memory_context, extra_system_prompt)
+
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    limit=10 * 1024 * 1024,
+                )
+            except FileNotFoundError:
                 return {
-                    "result": "Codex CLI auth failed (401). Run `codex login` to re-authenticate.",
+                    "result": f"Codex CLI not found at {self._bin}. Install it first.",
+                    "session_id": None,
+                    "written_files": [],
+                }
+
+            try:
+                data = await asyncio.wait_for(
+                    _read_codex_stream(
+                        proc,
+                        on_progress=on_progress,
+                        streaming_editor=streaming_editor,
+                        fallback_session_id=session_id,
+                    ),
+                    timeout=1800,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                raise TimeoutError("Codex CLI timed out after 1800s")
+            except RuntimeError as e:
+                await proc.wait()
+                stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+                err = stderr_bytes.decode().strip()
+                log.warning("Codex CLI stream empty, stderr: %s", err[:500])
+                if "401" in err or "Unauthorized" in err:
+                    return {
+                        "result": "Codex CLI auth failed (401). Run `codex login` to re-authenticate.",
+                        "session_id": session_id,
+                        "written_files": [],
+                    }
+                return {
+                    "result": f"Codex CLI error: {err[:500] or str(e)}",
                     "session_id": session_id,
                     "written_files": [],
                 }
-            return {
-                "result": f"Codex CLI error: {err[:500] or str(e)}",
-                "session_id": session_id,
-                "written_files": [],
-            }
 
-        await proc.wait()
+            await proc.wait()
 
-        if proc.returncode != 0:
-            stderr_bytes = await proc.stderr.read() if proc.stderr else b""
-            err = stderr_bytes.decode().strip()
-            log.warning("Codex CLI exited %d (stream mode), stderr: %s", proc.returncode, err[:500])
-            if data and data.get("result"):
-                return data
-            raise RuntimeError(f"Codex CLI exited {proc.returncode}: {err}")
+            if proc.returncode != 0:
+                stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+                err = stderr_bytes.decode().strip()
+                log.warning("Codex CLI exited %d (stream mode), stderr: %s", proc.returncode, err[:500])
+                if data and data.get("result"):
+                    return data
+                raise RuntimeError(f"Codex CLI exited {proc.returncode}: {err}")
 
-        return data
+            return data
+        finally:
+            try:
+                if had_existing:
+                    with open(agents_path, "w") as f:
+                        f.write(previous)
+                else:
+                    os.unlink(agents_path)
+            except FileNotFoundError:
+                pass
 
 
 def _extract_thread_id(event: dict, fallback: str | None = None) -> str | None:

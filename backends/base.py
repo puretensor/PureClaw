@@ -24,6 +24,7 @@ class Backend(Protocol):
         timeout: int = 300,
         system_prompt: str | None = None,
         memory_context: str | None = None,
+        tool_context=None,
     ) -> dict:
         """Synchronous LLM call.
 
@@ -42,6 +43,7 @@ class Backend(Protocol):
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
+        tool_context=None,
     ) -> dict:
         """Async streaming LLM call.
 
