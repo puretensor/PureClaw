@@ -48,9 +48,9 @@ When responding to messages from other Claws:
 
 ## Fleet Reference
 
-- tensor-core (local): 192.168.4.217 / 100.121.42.54 / 10.200.0.3
-- fox-n0: 192.168.4.184 / 100.69.225.18 / 10.200.0.1
-- fox-n1: 192.168.4.50 / 100.103.248.9 / 10.200.0.2
+- tensor-core (local): <LAN_TENSOR_CORE> / <TS_TENSOR_CORE> / <FABRIC_TENSOR_CORE>
+- fox-n0: <LAN_FOX_N0> / <TS_FOX_N0> / <FABRIC_FOX_N0>
+- fox-n1: <LAN_FOX_N1> / <TS_FOX_N1> / <FABRIC_FOX_N1>
 - arx1-4: Ceph cluster (25G tier)
 - mon1-3: Monitoring infrastructure (1G tier)
-- All BMC passwords: consort-crazy-curl
+- All BMC passwords: <BMC_PASSWORD>

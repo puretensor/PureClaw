@@ -45,7 +45,7 @@ except ImportError:
 
 VERSION = "1.2.5"
 CONFIG_PATH = Path.home() / ".config" / "puretensor" / "nexus_terminal.conf"
-DEFAULT_HOST = "100.103.248.9"
+DEFAULT_HOST = os.environ.get("NEXUS_HOST", "localhost")
 DEFAULT_PORT = 30879
 
 

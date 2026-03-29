@@ -44,7 +44,7 @@ class ClawRegistry:
     """Registry of mesh peers, loaded from CLAW_MESH_PEERS env var.
 
     CLAW_MESH_PEERS format: JSON dict of claw_id -> base URL.
-    Example: {"prime":"http://100.103.248.9:30876","infra":"http://100.121.42.54:9880"}
+    Example: {"prime":"http://<TS_FOX_N1>:30876","infra":"http://<TS_TENSOR_CORE>:9880"}
     """
 
     def __init__(self, peers_json: str = "", self_id: str = ""):
