@@ -13,10 +13,10 @@ import discord
 from db import (
     get_session,
     upsert_session,
+    update_backend,
     update_model,
     delete_session,
     get_lock,
-    reset_session_id,
 )
 from engine import call_streaming, split_message, get_model_display
 from channels.discord.streaming import DiscordStreamingEditor
@@ -60,45 +60,33 @@ async def handle_command(message: discord.Message):
     if cmd == "new":
         session = get_session(chat_id)
         model = session["model"] if session else "sonnet"
+        backend = session.get("backend") if session else None
         delete_session(chat_id)
-        update_model(chat_id, model)
+        update_model(chat_id, model, backend=backend)
         await channel.send("Session cleared. Next message starts a fresh conversation.")
         return True
 
     elif cmd == "opus":
-        import config
-        from backends import reset_backend
-        if config.ENGINE_BACKEND != "claude_code":
-            config.ENGINE_BACKEND = "claude_code"
-            reset_backend()
-        update_model(chat_id, "opus")
-        await channel.send(f"Switched to {get_model_display('opus')}.")
+        update_backend(chat_id, "claude_code")
+        update_model(chat_id, "opus", backend="claude_code")
+        await channel.send(f"Switched to {get_model_display('opus', backend_name='claude_code')}.")
         return True
 
     elif cmd == "sonnet":
-        import config
-        from backends import reset_backend
-        if config.ENGINE_BACKEND != "claude_code":
-            config.ENGINE_BACKEND = "claude_code"
-            reset_backend()
-        update_model(chat_id, "sonnet")
-        await channel.send(f"Switched to {get_model_display('sonnet')}.")
+        update_backend(chat_id, "claude_code")
+        update_model(chat_id, "sonnet", backend="claude_code")
+        await channel.send(f"Switched to {get_model_display('sonnet', backend_name='claude_code')}.")
         return True
 
     elif cmd == "ollama":
-        import config
-        from backends import reset_backend
-        if config.ENGINE_BACKEND != "ollama":
-            config.ENGINE_BACKEND = "ollama"
-            reset_backend()
-        update_model(chat_id, "sonnet")
-        await channel.send(f"Switched to {get_model_display('sonnet')} (local, with tools).")
+        update_backend(chat_id, "ollama")
+        update_model(chat_id, "sonnet", backend="ollama")
+        await channel.send(f"Switched to {get_model_display('sonnet', backend_name='ollama')} (local, with tools).")
         return True
 
     elif cmd == "backend":
-        import config
-        current = config.ENGINE_BACKEND
         session = get_session(chat_id)
+        current = session.get("backend") if session else None
         current_model = session["model"] if session else "sonnet"
 
         def check(text, active):
@@ -172,7 +160,7 @@ async def handle_message(message: discord.Message, client: discord.Client):
                 msg_count = session["message_count"] if session else 0
 
                 # Ack message
-                model_label = get_model_display(model)
+                model_label = get_model_display(model, chat_id=chat_id)
                 if session_id or msg_count > 0:
                     ack = f"*{model_label} processing... (msg #{msg_count + 1})*"
                 else:
@@ -184,6 +172,8 @@ async def handle_message(message: discord.Message, client: discord.Client):
                 data = await call_streaming(
                     user_text, session_id, model, streaming_editor=editor,
                     extra_system_prompt=DISCORD_SYSTEM_PROMPT,
+                    chat_id=chat_id,
+                    channel="discord",
                 )
 
                 result_text = data.get("result", "")
@@ -192,7 +182,9 @@ async def handle_message(message: discord.Message, client: discord.Client):
                 if not result_text:
                     result_text = "(Empty response)"
 
-                upsert_session(chat_id, new_session_id, model, msg_count + 1)
+                session_backend = session.get("backend") if session else None
+                upsert_kwargs = {"backend": session_backend} if session_backend is not None else {}
+                upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
                 await maybe_generate_summary(chat_id)
 
                 # Delete the ack message

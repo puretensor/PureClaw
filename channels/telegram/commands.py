@@ -35,6 +35,7 @@ from db import (
     get_session,
     upsert_session,
     update_model,
+    update_backend,
     delete_session,
     get_lock,
     authorized,
@@ -251,6 +252,7 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _onboarding_state.pop(chat_id, None)
     session = get_session(chat_id)
     model = session["model"] if session else "sonnet"
+    backend = session.get("backend") if session else None
     name = context.args[0] if context.args else "default"
     current_name = session["name"] if session else None
     # Clear conversation history for the current session before resetting
@@ -259,13 +261,13 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_name and current_name != name:
         # Different name: archive current session, then create/switch to new name
         archive_session(chat_id)
-        switch_session(chat_id, name, model)
+        switch_session(chat_id, name, model, backend=backend)
     else:
         # Same name (or no current session): hard-delete and recreate,
         # because UNIQUE(chat_id, name) prevents archiving + creating
         # a new row with the same name.
         delete_session(chat_id)
-        update_model(chat_id, model)
+        update_model(chat_id, model, backend=backend)
     if name == "default":
         await update.message.reply_text("Session cleared. Next message starts a fresh conversation.")
     else:
@@ -275,54 +277,40 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_opus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # Switch to Claude Code CLI backend (Max subscription)
-    import config
-    from backends import reset_backend
-    if config.ENGINE_BACKEND != "claude_code":
-        config.ENGINE_BACKEND = "claude_code"
-        reset_backend()
-    update_model(chat_id, "opus")
-    await update.message.reply_text(f"Switched to {get_model_display('opus')}.")
+    update_backend(chat_id, "claude_code")
+    update_model(chat_id, "opus", backend="claude_code")
+    await update.message.reply_text(
+        f"Switched to {get_model_display('opus', backend_name='claude_code')}."
+    )
 
 
 @authorized
 async def cmd_sonnet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # Switch to Claude Code CLI backend (Max subscription)
-    import config
-    from backends import reset_backend
-    if config.ENGINE_BACKEND != "claude_code":
-        config.ENGINE_BACKEND = "claude_code"
-        reset_backend()
-    update_model(chat_id, "sonnet")
-    await update.message.reply_text(f"Switched to {get_model_display('sonnet')}.")
+    update_backend(chat_id, "claude_code")
+    update_model(chat_id, "sonnet", backend="claude_code")
+    await update.message.reply_text(
+        f"Switched to {get_model_display('sonnet', backend_name='claude_code')}."
+    )
 
 
 @authorized
 async def cmd_ollama(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Switch to Ollama backend (Qwen3-235B local)."""
     chat_id = update.effective_chat.id
-    import config
-    from backends import reset_backend
-    if config.ENGINE_BACKEND != "ollama":
-        config.ENGINE_BACKEND = "ollama"
-        reset_backend()
-    update_model(chat_id, "sonnet")  # model name doesn't matter for ollama
-    await update.message.reply_text(f"Switched to {get_model_display('sonnet')} (local, with tools).")
+    update_backend(chat_id, "ollama")
+    update_model(chat_id, "sonnet", backend="ollama")  # model name doesn't matter for ollama
+    await update.message.reply_text(
+        f"Switched to {get_model_display('sonnet', backend_name='ollama')} (local, with tools)."
+    )
 
 
 @authorized
 async def cmd_bedrock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Switch to AWS Bedrock Sonnet 4.6 (API)."""
     chat_id = update.effective_chat.id
-    import config
-    from backends import reset_backend
-    from db import reset_session_id
-    if config.ENGINE_BACKEND != "bedrock_api":
-        config.ENGINE_BACKEND = "bedrock_api"
-        reset_backend()
-        reset_session_id(chat_id)
-    update_model(chat_id, "sonnet")
+    update_backend(chat_id, "bedrock_api")
+    update_model(chat_id, "sonnet", backend="bedrock_api")
     await update.message.reply_text("Switched to Bedrock Sonnet 4.6 (AWS API, with tools).")
 
 
@@ -330,14 +318,8 @@ async def cmd_bedrock(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_nemotron(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Switch to NVIDIA Nemotron Super (local vLLM)."""
     chat_id = update.effective_chat.id
-    import config
-    from backends import reset_backend
-    from db import reset_session_id
-    if config.ENGINE_BACKEND != "vllm":
-        config.ENGINE_BACKEND = "vllm"
-        reset_backend()
-        reset_session_id(chat_id)
-    update_model(chat_id, "nemotron")
+    update_backend(chat_id, "vllm")
+    update_model(chat_id, "nemotron", backend="vllm")
     await update.message.reply_text("Switched to NVIDIA Nemotron Super (local).")
 
 
@@ -345,11 +327,10 @@ async def cmd_nemotron(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_backend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show backend selection keyboard."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    import config
 
     # Mark the current backend
-    current = config.ENGINE_BACKEND
     session = get_session(update.effective_chat.id)
+    current = session.get("backend") if session else None
     current_model = session["model"] if session else "sonnet"
 
     def label(text, is_active):
@@ -610,7 +591,8 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = args[0]
         current = get_session(chat_id)
         model = current["model"] if current else "sonnet"
-        session = switch_session(chat_id, name, model)
+        backend = current.get("backend") if current else None
+        session = switch_session(chat_id, name, model, backend=backend)
         if session.get("message_count", 0) > 0 or session.get("session_id"):
             await update.message.reply_text(f"Switched to session: {name}")
         else:
@@ -629,7 +611,7 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["Sessions:"]
     for s in sessions:
         arrow = "\u2192 " if s["name"] == current_name else "  "
-        model_label = get_model_display(s["model"])
+        model_label = get_model_display(s["model"], backend_name=s.get("backend"))
         msg_count = s["message_count"] or 0
         summary_part = ""
         if s.get("summary"):
@@ -1415,7 +1397,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prompt = reply_ctx + user_text
 
             # Acknowledgment message
-            model_label = get_model_display(model)
+            model_label = get_model_display(model, chat_id=chat_id)
             if session_id or msg_count > 0:
                 ack = f"{model_label} processing... (msg #{msg_count + 1})"
             else:
@@ -1429,7 +1411,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             editor = StreamingEditor(update.effective_chat)
             data = await call_streaming(
                 prompt, session_id, model, streaming_editor=editor,
-                extra_system_prompt=extra_sp, chat_id=chat_id,
+                extra_system_prompt=extra_sp,
+                chat_id=chat_id,
+                channel="telegram",
             )
 
             result_text = data.get("result", "")
@@ -1438,7 +1422,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not result_text:
                 result_text = "(Empty response from Claude)"
 
-            upsert_session(chat_id, new_session_id, model, msg_count + 1)
+            session_backend = session.get("backend") if session else None
+            upsert_kwargs = {"backend": session_backend} if session_backend is not None else {}
+            upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
 
             # Journal entry (best-effort)
             try:
@@ -1620,7 +1606,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_ctx = _build_reply_context(update.message)
             prompt = reply_ctx + transcript
 
-            model_label = get_model_display(model)
+            model_label = get_model_display(model, chat_id=chat_id)
             await update.message.reply_text(f"{model_label} processing...")
 
             # Build extra system prompt for voice mode
@@ -1629,7 +1615,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             editor = StreamingEditor(update.effective_chat)
             data = await call_streaming(
                 prompt, session_id, model, streaming_editor=editor,
-                extra_system_prompt=extra_sp, chat_id=chat_id,
+                extra_system_prompt=extra_sp,
+                chat_id=chat_id,
+                channel="telegram",
             )
 
             result_text = data.get("result", "")
@@ -1638,7 +1626,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not result_text:
                 result_text = "(Empty response from Claude)"
 
-            upsert_session(chat_id, new_session_id, model, msg_count + 1)
+            session_backend = session.get("backend") if session else None
+            upsert_kwargs = {"backend": session_backend} if session_backend is not None else {}
+            upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
 
             # Journal entry for voice (best-effort)
             try:

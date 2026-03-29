@@ -89,7 +89,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Acknowledgment
             from engine import get_model_display
-            model_label = get_model_display(model)
+            model_label = get_model_display(model, chat_id=chat_id)
             if session_id:
                 ack = f"{model_label} processing location... (msg #{msg_count + 1})"
             else:
@@ -99,7 +99,12 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Stream Claude output
             editor = StreamingEditor(update.effective_chat)
             data = await call_streaming(
-                prompt, session_id, model, streaming_editor=editor
+                prompt,
+                session_id,
+                model,
+                streaming_editor=editor,
+                chat_id=chat_id,
+                channel="telegram",
             )
 
             result_text = data.get("result", "")
@@ -108,7 +113,9 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not result_text:
                 result_text = "(Empty response from Claude)"
 
-            upsert_session(chat_id, new_session_id, model, msg_count + 1)
+            session_backend = session.get("backend") if session else None
+            upsert_kwargs = {"backend": session_backend} if session_backend is not None else {}
+            upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
             await maybe_generate_summary(chat_id)
 
             if editor.text:

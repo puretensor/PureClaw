@@ -13,7 +13,14 @@ import websockets
 
 from channels.base import Channel
 from channels.terminal.streaming import TerminalStreamingEditor
-from db import get_session, upsert_session, update_model, delete_session, get_lock
+from db import (
+    get_session,
+    upsert_session,
+    update_model,
+    update_backend,
+    delete_session,
+    get_lock,
+)
 from engine import call_streaming, get_model_display
 from config import (
     AGENT_NAME,
@@ -143,8 +150,9 @@ async def _handle_command(ws, cmd: str, args: str):
     if cmd == "new":
         session = get_session(chat_id)
         model = session["model"] if session else "sonnet"
+        backend = session.get("backend") if session else None
         delete_session(chat_id)
-        update_model(chat_id, model)
+        update_model(chat_id, model, backend=backend)
         await _send_json(ws, {
             "type": "command_result",
             "text": "Session cleared. Next message starts fresh.",
@@ -153,69 +161,44 @@ async def _handle_command(ws, cmd: str, args: str):
     # --- Model switching: Bedrock for Claude, vLLM for Nemotron ---
 
     elif cmd == "opus":
-        import config
-        from backends import reset_backend
-        old_backend = config.ENGINE_BACKEND
-        if old_backend != "bedrock_api":
-            config.ENGINE_BACKEND = "bedrock_api"
-            reset_backend()
-            delete_session(chat_id)  # clear history on backend switch
-        update_model(chat_id, "opus")
+        update_backend(chat_id, "bedrock_api")
+        update_model(chat_id, "opus", backend="bedrock_api")
         await _send_json(ws, {
             "type": "command_result",
             "text": "Switched to Claude Opus (Bedrock).",
         })
 
     elif cmd == "sonnet":
-        import config
-        from backends import reset_backend
-        old_backend = config.ENGINE_BACKEND
-        if old_backend != "bedrock_api":
-            config.ENGINE_BACKEND = "bedrock_api"
-            reset_backend()
-            delete_session(chat_id)
-        update_model(chat_id, "sonnet")
+        update_backend(chat_id, "bedrock_api")
+        update_model(chat_id, "sonnet", backend="bedrock_api")
         await _send_json(ws, {
             "type": "command_result",
             "text": "Switched to Claude Sonnet (Bedrock).",
         })
 
     elif cmd in ("nemotron", "vllm"):
-        import config
-        from backends import reset_backend
-        old_backend = config.ENGINE_BACKEND
-        if old_backend != "vllm":
-            config.ENGINE_BACKEND = "vllm"
-            reset_backend()
-            delete_session(chat_id)
-        update_model(chat_id, "sonnet")
+        update_backend(chat_id, "vllm")
+        update_model(chat_id, "sonnet", backend="vllm")
         await _send_json(ws, {
             "type": "command_result",
             "text": "Switched to Nemotron Super (vLLM, local GPUs).",
         })
 
     elif cmd == "ollama":
-        import config
-        from backends import reset_backend
-        old_backend = config.ENGINE_BACKEND
-        if old_backend != "ollama":
-            config.ENGINE_BACKEND = "ollama"
-            reset_backend()
-            delete_session(chat_id)
-        update_model(chat_id, "sonnet")
+        update_backend(chat_id, "ollama")
+        update_model(chat_id, "sonnet", backend="ollama")
         await _send_json(ws, {
             "type": "command_result",
-            "text": f"Switched to {get_model_display('sonnet')} (local Ollama).",
+            "text": f"Switched to {get_model_display('sonnet', backend_name='ollama')} (local Ollama).",
         })
 
     elif cmd == "model":
         if args and args in ("opus", "sonnet", "ollama", "nemotron", "vllm"):
             await _handle_command(ws, args, "")
         else:
-            import config
             session = get_session(chat_id)
             model = session["model"] if session else "sonnet"
-            backend = config.ENGINE_BACKEND
+            backend = session.get("backend") if session else None
             await _send_json(ws, {
                 "type": "command_result",
                 "text": f"Backend: {backend}, Model: {model}",
@@ -257,12 +240,11 @@ async def _handle_command(ws, cmd: str, args: str):
         if session is None or session["session_id"] is None:
             text = "No active session. Send a message to start one."
         else:
-            import config
             name = session.get("name", "default")
             summary = session.get("summary")
             text = (
                 f"Session: {session['session_id'][:12]}... (name: {name})\n"
-                f"Backend: {config.ENGINE_BACKEND}, Model: {session['model']}\n"
+                f"Backend: {session.get('backend')}, Model: {session['model']}\n"
                 f"Messages: {session['message_count']}\n"
             )
             if summary:
@@ -272,14 +254,16 @@ async def _handle_command(ws, cmd: str, args: str):
 
     elif cmd == "sessions":
         from db import list_sessions
-        sessions = list_sessions()
+        sessions = list_sessions(chat_id)
         if not sessions:
             text = "No saved sessions."
         else:
             lines = []
             for s in sessions[:10]:
                 label = s.get("name") or s["session_id"][:12]
-                lines.append(f"  {label} ({s['model']}, {s['message_count']} msgs)")
+                lines.append(
+                    f"  {label} ({s.get('backend', '?')}, {s['model']}, {s['message_count']} msgs)"
+                )
             text = "Recent sessions:\n" + "\n".join(lines)
         await _send_json(ws, {"type": "command_result", "text": text})
 
@@ -337,6 +321,7 @@ async def _handle_message(ws, text: str):
         model = session["model"] if session else "sonnet"
         session_id = session["session_id"] if session else None
         msg_count = session["message_count"] if session else 0
+        backend_name = session.get("backend") if session else None
 
         for attempt in range(2):
             try:
@@ -348,13 +333,15 @@ async def _handle_message(ws, text: str):
                     streaming_editor=editor,
                     extra_system_prompt=TERMINAL_SYSTEM_PROMPT,
                     chat_id=chat_id,
+                    backend_name=backend_name,
+                    channel="terminal",
                 )
 
                 # Check if primary failed and fell over (stale history)
                 if data.get("_failover") and session_id and attempt == 0:
                     log.info("Terminal: failover detected with existing session, flushing and retrying on clean session")
                     delete_session(chat_id)
-                    update_model(chat_id, model)
+                    update_model(chat_id, model, backend=backend_name)
                     session_id = None
                     msg_count = 0
                     continue
@@ -362,7 +349,8 @@ async def _handle_message(ws, text: str):
                 result_text = data.get("result", "")
                 new_session_id = data.get("session_id", session_id)
 
-                upsert_session(chat_id, new_session_id, model, msg_count + 1)
+                upsert_kwargs = {"backend": backend_name} if backend_name is not None else {}
+                upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
 
                 await editor.finalize()
 
@@ -453,11 +441,11 @@ class TerminalChannel(Channel):
                         await _send_json(ws, {"type": "error", "message": "Unauthorized"})
                         await ws.close(4001, "Unauthorized")
                         return
-                    import config as _cfg
+                    session = get_session(TERMINAL_CHAT_ID)
                     await _send_json(ws, {
                         "type": "auth_ok",
-                        "backend": _cfg.ENGINE_BACKEND,
-                        "model": get_session(TERMINAL_CHAT_ID)["model"] if get_session(TERMINAL_CHAT_ID) else "sonnet",
+                        "backend": session.get("backend") if session else None,
+                        "model": session["model"] if session else "sonnet",
                         "version": "1.0.0",
                     })
                 except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
