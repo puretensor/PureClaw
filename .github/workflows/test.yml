@@ -30,6 +30,14 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
 
+      - name: Run async warning gate
+        run: |
+          pytest -q \
+            tests/test_escalation.py::TestEscalationFixCallback::test_fix_timeout_handled \
+            tests/test_file_output.py::TestScanAndSendOutputs::test_tilde_expansion \
+            tests/test_summaries.py::TestMaybeGenerateSummary::test_double_interval_triggers \
+            tests/test_voice_tts.py::TestTextToVoiceNote::test_success \
+            -W error::RuntimeWarning
+
       - name: Run tests
         run: pytest tests/ -v --tb=short
-

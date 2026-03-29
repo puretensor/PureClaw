@@ -24,6 +24,13 @@ with patch.dict("os.environ", {
     from observers.node_health import NodeHealthObserver
 
 
+async def _timeout_wait_for(awaitable, timeout):
+    """Raise TimeoutError without leaking the passed coroutine."""
+    if hasattr(awaitable, "close"):
+        awaitable.close()
+    raise asyncio.TimeoutError()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -255,11 +262,8 @@ class TestEscalationFixCallback:
         }):
             with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
                 mock_exec.return_value = mock_proc
-                with patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
-                    mock_wait.return_value = (b"", b"")
-
-                    from channels.telegram.callbacks import handle_callback
-                    await handle_callback(update, ctx)
+                from channels.telegram.callbacks import handle_callback
+                await handle_callback(update, ctx)
 
         query = update.callback_query
         query.answer.assert_awaited_once()
@@ -287,9 +291,7 @@ class TestEscalationFixCallback:
         }):
             with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
                 mock_exec.return_value = mock_proc
-                with patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
-                    mock_wait.side_effect = asyncio.TimeoutError()
-
+                with patch("asyncio.wait_for", new=_timeout_wait_for):
                     from channels.telegram.callbacks import handle_callback
                     await handle_callback(update, ctx)
 
@@ -313,11 +315,8 @@ class TestEscalationFixCallback:
         }):
             with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
                 mock_exec.return_value = mock_proc
-                with patch("asyncio.wait_for", new_callable=AsyncMock) as mock_wait:
-                    mock_wait.return_value = (b"", b"Connection refused")
-
-                    from channels.telegram.callbacks import handle_callback
-                    await handle_callback(update, ctx)
+                from channels.telegram.callbacks import handle_callback
+                await handle_callback(update, ctx)
 
         ctx.bot.send_message.assert_awaited_once()
         result_msg = ctx.bot.send_message.call_args[1]["text"]
