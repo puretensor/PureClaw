@@ -274,12 +274,15 @@ class TestTick:
         obs = StubObserver(name="ticker", schedule="* * * * *")
         reg.register(obs)
 
-        with patch("observers.registry.datetime") as mock_dt:
+        with patch("observers.registry.datetime") as mock_dt, \
+             patch.object(obs, "send_telegram") as mock_tg:
             mock_dt.now.return_value = datetime(2026, 2, 10, 8, 30, tzinfo=timezone.utc)
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await reg.tick()
 
         assert obs.run_count == 1
+        mock_tg.assert_called_once()
+        assert mock_tg.call_args.args[0] == "done"
 
     @pytest.mark.asyncio
     async def test_tick_skips_not_due(self):
@@ -319,7 +322,8 @@ class TestTick:
         obs = StubObserver(name="tracker", schedule="* * * * *")
         reg.register(obs)
 
-        with patch("observers.registry.datetime") as mock_dt:
+        with patch("observers.registry.datetime") as mock_dt, \
+             patch.object(obs, "send_telegram"):
             mock_dt.now.return_value = datetime(2026, 2, 10, 8, 30, tzinfo=timezone.utc)
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await reg.tick()

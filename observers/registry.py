@@ -94,6 +94,10 @@ class ObserverRegistry:
             self.observers.append(observer)
             log.info("Registered observer: %s [%s]", observer.name, observer.schedule)
 
+    def all_observers(self) -> list[Observer]:
+        """Return all registered observers, including persistent ones."""
+        return [*self.observers, *self._persistent]
+
     def _is_due(self, observer: Observer, now: datetime) -> bool:
         """Check if an observer should run now."""
         if not observer.schedule:
@@ -139,24 +143,32 @@ class ObserverRegistry:
         """Check all observers and run any that are due."""
         now = datetime.now(timezone.utc)
         loop = asyncio.get_event_loop()
-
+        due: list[Observer] = []
         for observer in self.observers:
-            if not self._is_due(observer, now):
-                continue
+            if self._is_due(observer, now):
+                log.info("Running observer: %s", observer.name)
+                self._last_run[observer.name] = time.time()
+                due.append(observer)
 
-            log.info("Running observer: %s", observer.name)
-            self._last_run[observer.name] = time.time()
+        if not due:
+            return
 
-            result = await loop.run_in_executor(_executor, self._run_observer, observer)
+        results = await asyncio.gather(
+            *(loop.run_in_executor(_executor, self._run_observer, observer) for observer in due)
+        )
 
+        for observer, result in zip(due, results):
             if result.success:
                 if result.message:
                     log.info("Observer %s: sending result to Telegram", observer.name)
+                    try:
+                        observer.send_telegram(result.message, token=ALERT_BOT_TOKEN)
+                    except Exception:
+                        log.exception("Observer %s result delivery failed", observer.name)
                 else:
                     log.debug("Observer %s: silent success", observer.name)
             else:
                 log.warning("Observer %s failed: %s", observer.name, result.error)
-                # Send error notification
                 try:
                     observer.send_telegram(f"[{observer.name}] ERROR: {result.error}", token=ALERT_BOT_TOKEN)
                 except Exception:

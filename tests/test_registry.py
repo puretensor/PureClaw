@@ -201,8 +201,11 @@ class TestObserverRegistry:
         obs = _TestObserver()
         obs.schedule = "* * * * *"  # every minute
         reg.register(obs)
-        await reg.tick()
+        with patch.object(obs, "send_telegram") as mock_tg:
+            await reg.tick()
         assert obs.run_count == 1
+        mock_tg.assert_called_once()
+        assert mock_tg.call_args.args[0] == "test done"
 
 
 # ── Observer context ─────────────────────────────────────────────────────────

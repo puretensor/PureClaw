@@ -6,16 +6,18 @@ Tier 2: LLM-based summarization (triggered when token estimate exceeds threshold
 
 import json
 import logging
-import os
 
 log = logging.getLogger("nexus")
 
-# Configuration
-COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"))
-PRESERVE_RECENT_MESSAGES = int(os.environ.get("PRESERVE_RECENT_MESSAGES", "40"))
+from config import (
+    COMPRESS_TRIGGER_TOKENS,
+    PRESERVE_RECENT_MESSAGES,
+    SUMMARY_BACKEND,
+    SUMMARY_MODEL,
+)
+
 TOOL_RESULT_FULL_WINDOW = 6  # Keep last N tool results verbatim
 TOOL_RESULT_SUMMARY_CHARS = 200  # Truncate older tool results to this
-SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-3-flash-preview")
 
 
 def estimate_tokens(messages: list[dict]) -> int:
@@ -108,22 +110,21 @@ def _build_summary_prompt(old_messages: list[dict]) -> str:
 
 
 def _call_summarizer_sync(prompt: str) -> str:
-    """Call Azure OpenAI GPT-5.1-chat to summarize. Synchronous (runs in thread pool)."""
-    from openai import AzureOpenAI
+    """Summarize through the normal engine/backend pipeline."""
+    from engine import call_sync
 
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-    if not api_key or not endpoint:
-        raise ValueError("AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT not set")
-
-    client = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
-    response = client.chat.completions.create(
-        model="gpt-5-1-chat",
-        messages=[{"role": "user", "content": prompt}],
-        max_completion_tokens=2000,
+    response = call_sync(
+        prompt,
+        model=SUMMARY_MODEL,
+        timeout=180,
+        backend_name=SUMMARY_BACKEND,
+        channel="context_compression",
+        tool_profile="read_only",
     )
-    return (response.choices[0].message.content or "").strip()
+    result = (response.get("result") or "").strip()
+    if not result:
+        raise ValueError("empty summary result")
+    return result
 
 
 def compress_history(messages: list[dict]) -> list[dict]:

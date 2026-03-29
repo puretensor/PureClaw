@@ -198,26 +198,24 @@ class TestTextToVoiceNote:
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
-
-        saved_paths = {}
-        orig_write = Path.write_bytes
+        mock_proc.ogg_path = None
 
         async def mock_wait():
-            # Find the wav file and create corresponding ogg
-            import glob
-            import tempfile
-            tmp_dir = tempfile.gettempdir()
-            for f in Path(tmp_dir).glob("*.wav"):
-                ogg = str(f).replace(".wav", ".ogg")
-                Path(ogg).write_bytes(b"fake ogg data")
-                break
+            if mock_proc.ogg_path:
+                Path(mock_proc.ogg_path).write_bytes(b"fake ogg data")
             return 0
 
         mock_proc.wait = mock_wait
 
+        async def mock_create_subprocess_exec(*args, **kwargs):
+            mock_proc.ogg_path = args[-1]
+            return mock_proc
+
         with patch("handlers.voice_tts.aiohttp.ClientSession", return_value=mock_session):
-            with patch("handlers.voice_tts.asyncio.create_subprocess_exec",
-                       new_callable=AsyncMock, return_value=mock_proc):
+            with patch(
+                "handlers.voice_tts.asyncio.create_subprocess_exec",
+                side_effect=mock_create_subprocess_exec,
+            ):
                 result = await text_to_voice_note("Hello world")
 
         assert result == b"fake ogg data"
@@ -245,9 +243,14 @@ class TestTextToVoiceNote:
 
         mock_proc.wait = mock_wait
 
+        async def mock_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
+
         with patch("handlers.voice_tts.aiohttp.ClientSession", return_value=mock_session):
-            with patch("handlers.voice_tts.asyncio.create_subprocess_exec",
-                       new_callable=AsyncMock, return_value=mock_proc):
+            with patch(
+                "handlers.voice_tts.asyncio.create_subprocess_exec",
+                side_effect=mock_create_subprocess_exec,
+            ):
                 result = await text_to_voice_note("Hello world")
 
         assert result is None
@@ -258,18 +261,22 @@ class TestTextToVoiceNote:
         mock_session = _mock_aiohttp_session(200, b"fake wav data")
 
         mock_proc = AsyncMock()
+        mock_proc.wait = AsyncMock()
 
-        async def mock_wait():
-            await asyncio.sleep(100)
-            return 0
+        async def mock_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
 
-        mock_proc.wait = mock_wait
+        def raise_timeout(coro, *args, **kwargs):
+            coro.close()
+            raise asyncio.TimeoutError
 
         with patch("handlers.voice_tts.aiohttp.ClientSession", return_value=mock_session):
-            with patch("handlers.voice_tts.asyncio.create_subprocess_exec",
-                       new_callable=AsyncMock, return_value=mock_proc):
+            with patch(
+                "handlers.voice_tts.asyncio.create_subprocess_exec",
+                side_effect=mock_create_subprocess_exec,
+            ):
                 with patch("handlers.voice_tts.asyncio.wait_for",
-                           side_effect=asyncio.TimeoutError):
+                           side_effect=raise_timeout):
                     result = await text_to_voice_note("Hello world")
 
         assert result is None
@@ -300,9 +307,14 @@ class TestTextToVoiceNote:
             return 0
         mock_proc.wait = mock_wait
 
+        async def mock_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
+
         with patch("handlers.voice_tts.aiohttp.ClientSession", return_value=mock_session):
-            with patch("handlers.voice_tts.asyncio.create_subprocess_exec",
-                       new_callable=AsyncMock, return_value=mock_proc):
+            with patch(
+                "handlers.voice_tts.asyncio.create_subprocess_exec",
+                side_effect=mock_create_subprocess_exec,
+            ):
                 result = await text_to_voice_note(long_text)
 
         # Verify text was truncated
