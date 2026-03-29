@@ -4,20 +4,22 @@
 Runs every 6 hours. Checks that critical pipelines are alive and producing
 output. Sends a Telegram alert if any pipeline appears stalled or dead.
 
+All freshness checks SSH to tensor-core directly, avoiding dependency on
+the /sync/ mount which may be stale.
+
 Checks:
-  1. voice-kb ingest: service running on TC, output files recent
-  2. daily report: last compiled date is yesterday or today
-  3. rsync sync: /sync/ data is fresh (updated within 30 min)
+  1. CC reports: recent session reports on TC
+  2. voice-kb ingest: service running on TC, output files recent
+  3. daily report: branded PDF compiled recently
   4. vLLM: responding to health checks
-  5. observer cron: observers ran recently (not stuck)
+  5. observer state: state files present and recently updated
 """
 
-import json
 import logging
 import os
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from observers.base import Observer, ObserverResult
@@ -33,18 +35,14 @@ STARTUP_GRACE_SECS = 600  # 10 minutes
 _pod_start_time = time.monotonic()
 
 # Thresholds
-VOICE_KB_STALE_HOURS = 24  # Alert if no new voice-kb output in this many hours
-SYNC_STALE_MINUTES = 60    # Alert if /sync/ data older than this
-DAILY_REPORT_MAX_AGE_HOURS = 36  # Alert if last daily report older than this
+CC_STALE_MINUTES = 60          # Alert if no new CC report in this many minutes
+VOICE_KB_STALE_HOURS = 24      # Alert if no new voice-kb output in this many hours
+DAILY_REPORT_MAX_AGE_HOURS = 36  # Alert if last daily report PDF older than this
 
-# Paths
-SYNC_DIR = Path("/sync")
-CC_REPORTS_DIR = SYNC_DIR / "reports" / "cc"
-VOICE_KB_SYNC_DIR = SYNC_DIR / "voice-kb" / "kb"
-DAILY_REPORT_STATE = Path(os.environ.get(
-    "OBSERVER_STATE_DIR", "/data/state/observers"
-)) / "daily_report_state.json"
-OUTPUT_DIR = Path("/output/daily")
+# Remote paths on tensor-core (checked via SSH)
+TC_CC_REPORTS = "~/reports/cc"
+TC_VOICE_KB = "~/voice-kb/kb"
+TC_DAILY_REPORTS = "~/reports/daily"
 
 # TC Tailscale IP for SSH checks
 TC_HOST = os.environ.get("TC_SSH_HOST", "localhost")
@@ -55,6 +53,12 @@ if _vllm_env.rstrip("/").endswith("/v1"):
 else:
     VLLM_URL = _vllm_env
 
+# Observer state directory (K8s PVC or local fallback)
+OBSERVER_STATE_DIR = Path(os.environ.get(
+    "OBSERVER_STATE_DIR",
+    str(Path(__file__).parent / ".state"),
+))
+
 
 class PipelineWatchdog(Observer):
     """Monitors critical pipeline health and alerts on failures."""
@@ -63,7 +67,7 @@ class PipelineWatchdog(Observer):
     schedule = "0 */6 * * *"  # Every 6 hours
 
     def run(self, ctx=None) -> ObserverResult:
-        # Startup grace period — skip remote checks if pod just started
+        # Startup grace period -- skip remote checks if pod just started
         uptime = time.monotonic() - _pod_start_time
         if uptime < STARTUP_GRACE_SECS:
             log.info("Pipeline watchdog: skipping (pod uptime %.0fs < %ds grace)",
@@ -77,19 +81,19 @@ class PipelineWatchdog(Observer):
         alerts = []
         healthy = []
 
-        # 1. Check rsync sync freshness
-        self._check_sync_freshness(now, alerts, healthy)
+        # 1. Check CC report freshness on TC
+        self._check_cc_freshness(now, alerts, healthy)
 
-        # 2. Check voice-kb ingest service (via systemd on TC)
+        # 2. Check voice-kb ingest service and output freshness on TC
         self._check_voice_kb(now, alerts, healthy)
 
-        # 3. Check daily report recency
+        # 3. Check daily report PDF recency on TC
         self._check_daily_report(now, alerts, healthy)
 
         # 4. Check vLLM health
         self._check_vllm(alerts, healthy)
 
-        # 5. Check observer state directory for stale locks
+        # 5. Check observer state directory
         self._check_observer_health(now, alerts, healthy)
 
         # Build result
@@ -107,7 +111,7 @@ class PipelineWatchdog(Observer):
                 data={"alerts": alerts, "healthy": healthy},
             )
 
-        # All healthy — silent success (don't spam Telegram)
+        # All healthy -- silent success (don't spam Telegram)
         log.info("Pipeline watchdog: all %d checks healthy", len(healthy))
         return ObserverResult(
             success=True,
@@ -115,47 +119,80 @@ class PipelineWatchdog(Observer):
             data={"alerts": [], "healthy": healthy},
         )
 
-    def _check_sync_freshness(self, now, alerts, healthy):
-        """Check that /sync/ data is being updated by the rsync cron."""
-        try:
-            # Find the most recent file in CC reports
-            if CC_REPORTS_DIR.exists():
-                files = sorted(CC_REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime)
-                if files:
-                    newest = files[-1]
-                    age_min = (now.timestamp() - newest.stat().st_mtime) / 60
-                    if age_min > SYNC_STALE_MINUTES:
-                        alerts.append(
-                            f"Rsync sync stale: newest CC report is {age_min:.0f} min old "
-                            f"(threshold: {SYNC_STALE_MINUTES} min) \u2014 "
-                            f"check crontab rsync on tensor-core"
-                        )
-                    else:
-                        healthy.append(f"Rsync sync: fresh ({age_min:.0f} min ago)")
-                    return
+    # -- SSH helpers --------------------------------------------------------
 
-            alerts.append("Rsync sync: /sync/reports/cc/ directory missing or empty")
-        except Exception as e:
-            alerts.append(f"Rsync sync check failed: {e}")
+    def _ssh_cmd(self, cmd: str, timeout: int = 15) -> subprocess.CompletedProcess | None:
+        """Run a command on TC via SSH. Returns CompletedProcess or None on failure."""
+        try:
+            return subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no",
+                 f"puretensorai@{TC_HOST}", cmd],
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+    def _ssh_newest_file_age(self, remote_dir: str, glob_pattern: str = "*.md") -> float | None:
+        """Get age in seconds of the newest file matching a pattern on TC.
+
+        Returns age in seconds, or None on SSH/parse failure.
+        """
+        # ls -t sorts by mtime descending; stat gets epoch mtime of the first result
+        cmd = (
+            f"f=$(ls -t {remote_dir}/{glob_pattern} 2>/dev/null | head -1) && "
+            f"[ -n \"$f\" ] && stat -c '%Y' \"$f\""
+        )
+        result = self._ssh_cmd(cmd)
+        if result is None or result.returncode != 0 or not result.stdout.strip():
+            return None
+        try:
+            mtime = int(result.stdout.strip())
+            return time.time() - mtime
+        except ValueError:
+            return None
 
     def _ssh_service_active(self, service: str) -> bool | None:
         """Check if a systemd service is active on TC via SSH.
 
         Returns True/False for definitive results, None for transient failures.
         """
-        try:
-            result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no",
-                 f"puretensorai@{TC_HOST}",
-                 f"systemctl is-active {service} 2>/dev/null"],
-                capture_output=True, text=True, timeout=15,
+        result = self._ssh_cmd(f"systemctl is-active {service} 2>/dev/null")
+        if result is None:
+            return None
+        return result.stdout.strip() == "active"
+
+    # -- Individual checks --------------------------------------------------
+
+    def _check_cc_freshness(self, now, alerts, healthy):
+        """Check that CC session reports are being generated on TC."""
+        age_secs = None
+        for attempt in range(MAX_RETRIES):
+            age_secs = self._ssh_newest_file_age(TC_CC_REPORTS, "*.md")
+            if age_secs is not None:
+                break
+            if attempt < MAX_RETRIES - 1:
+                log.info("CC freshness SSH check failed (attempt %d/%d), retrying in %ds",
+                         attempt + 1, MAX_RETRIES, RETRY_DELAY_SECS)
+                time.sleep(RETRY_DELAY_SECS)
+
+        if age_secs is None:
+            alerts.append(
+                f"CC reports: SSH to tensor-core failed after {MAX_RETRIES} attempts "
+                f"or no reports found in {TC_CC_REPORTS}/"
             )
-            return result.stdout.strip() == "active"
-        except (subprocess.TimeoutExpired, OSError):
-            return None  # Transient — worth retrying
+            return
+
+        age_min = age_secs / 60
+        if age_min > CC_STALE_MINUTES:
+            alerts.append(
+                f"CC reports stale: newest report is {age_min:.0f} min old "
+                f"(threshold: {CC_STALE_MINUTES} min)"
+            )
+        else:
+            healthy.append(f"CC reports: fresh ({age_min:.0f} min ago)")
 
     def _check_voice_kb(self, now, alerts, healthy):
-        """Check voice-kb ingest service and output freshness (with retries)."""
+        """Check voice-kb ingest service and output freshness on TC (with retries)."""
         service_active = None
         for attempt in range(MAX_RETRIES):
             service_active = self._ssh_service_active("voice-kb-ingest")
@@ -180,53 +217,52 @@ class PipelineWatchdog(Observer):
             )
             return
 
-        # Check output freshness via sync mount
-        try:
-            if VOICE_KB_SYNC_DIR.exists():
-                files = sorted(VOICE_KB_SYNC_DIR.glob("*.md"),
-                              key=lambda p: p.stat().st_mtime)
-                if files:
-                    newest = files[-1]
-                    age_hrs = (now.timestamp() - newest.stat().st_mtime) / 3600
-                    if age_hrs > VOICE_KB_STALE_HOURS:
-                        alerts.append(
-                            f"voice-kb output stale: newest memo is {age_hrs:.1f}h old "
-                            f"(threshold: {VOICE_KB_STALE_HOURS}h) \u2014 "
-                            f"service may be running but not producing output"
-                        )
-                    else:
-                        healthy.append(
-                            f"voice-kb ingest: active, output {age_hrs:.1f}h ago"
-                        )
-                    return
-
-            healthy.append("voice-kb ingest: service active (sync dir not available for freshness check)")
-        except Exception as e:
-            alerts.append(f"voice-kb freshness check failed: {e}")
+        # Check output freshness via SSH to TC
+        age_secs = self._ssh_newest_file_age(TC_VOICE_KB, "*.md")
+        if age_secs is not None:
+            age_hrs = age_secs / 3600
+            if age_hrs > VOICE_KB_STALE_HOURS:
+                alerts.append(
+                    f"voice-kb output stale: newest memo is {age_hrs:.1f}h old "
+                    f"(threshold: {VOICE_KB_STALE_HOURS}h) \u2014 "
+                    f"service may be running but not producing output"
+                )
+            else:
+                healthy.append(
+                    f"voice-kb ingest: active, output {age_hrs:.1f}h ago"
+                )
+        else:
+            healthy.append("voice-kb ingest: service active (could not check output freshness)")
 
     def _check_daily_report(self, now, alerts, healthy):
-        """Check that the daily report observer ran recently."""
-        try:
-            if DAILY_REPORT_STATE.exists():
-                data = json.loads(DAILY_REPORT_STATE.read_text())
-                last_date = data.get("last_compiled_date", "")
-                if last_date:
-                    last_dt = datetime.strptime(last_date, "%Y-%m-%d").replace(
-                        tzinfo=timezone.utc
-                    )
-                    age_hrs = (now - last_dt).total_seconds() / 3600
-                    if age_hrs > DAILY_REPORT_MAX_AGE_HOURS:
-                        alerts.append(
-                            f"Daily report stale: last compiled {last_date} "
-                            f"({age_hrs:.0f}h ago, threshold: {DAILY_REPORT_MAX_AGE_HOURS}h)"
-                        )
-                    else:
-                        healthy.append(f"Daily report: last compiled {last_date}")
-                    return
+        """Check that daily branded PDF reports are being generated on TC."""
+        age_secs = None
+        for attempt in range(MAX_RETRIES):
+            age_secs = self._ssh_newest_file_age(
+                TC_DAILY_REPORTS, "PureTensor_Daily_Report_*.pdf"
+            )
+            if age_secs is not None:
+                break
+            if attempt < MAX_RETRIES - 1:
+                log.info("Daily report SSH check failed (attempt %d/%d), retrying in %ds",
+                         attempt + 1, MAX_RETRIES, RETRY_DELAY_SECS)
+                time.sleep(RETRY_DELAY_SECS)
 
-            alerts.append("Daily report: no state file found \u2014 observer may never have run")
-        except Exception as e:
-            alerts.append(f"Daily report check failed: {e}")
+        if age_secs is None:
+            alerts.append(
+                f"Daily report: SSH to tensor-core failed after {MAX_RETRIES} attempts "
+                f"or no PDFs found in {TC_DAILY_REPORTS}/"
+            )
+            return
+
+        age_hrs = age_secs / 3600
+        if age_hrs > DAILY_REPORT_MAX_AGE_HOURS:
+            alerts.append(
+                f"Daily report stale: newest PDF is {age_hrs:.0f}h old "
+                f"(threshold: {DAILY_REPORT_MAX_AGE_HOURS}h)"
+            )
+        else:
+            healthy.append(f"Daily report: PDF generated {age_hrs:.1f}h ago")
 
     def _curl_health(self, url: str) -> str | None:
         """Curl a health endpoint. Returns HTTP status code, or None on transient failure."""
@@ -237,7 +273,7 @@ class PipelineWatchdog(Observer):
                 capture_output=True, text=True, timeout=10,
             )
             status = result.stdout.strip()
-            # HTTP 000 = connection failed — treat as transient
+            # HTTP 000 = connection failed -- treat as transient
             if status == "000":
                 return None
             return status
@@ -270,10 +306,17 @@ class PipelineWatchdog(Observer):
     def _check_observer_health(self, now, alerts, healthy):
         """Check observer state directory for signs of life."""
         try:
-            state_dir = DAILY_REPORT_STATE.parent
-            if state_dir.exists():
-                state_files = list(state_dir.glob("*.json"))
-                healthy.append(f"Observer state: {len(state_files)} state files present")
+            if OBSERVER_STATE_DIR.exists():
+                state_files = list(OBSERVER_STATE_DIR.glob("*.json"))
+                if state_files:
+                    newest = max(state_files, key=lambda p: p.stat().st_mtime)
+                    age_hrs = (now.timestamp() - newest.stat().st_mtime) / 3600
+                    healthy.append(
+                        f"Observer state: {len(state_files)} files, "
+                        f"last update {age_hrs:.1f}h ago ({newest.name})"
+                    )
+                else:
+                    alerts.append("Observer state: directory exists but no state files")
             else:
                 alerts.append("Observer state directory missing")
         except Exception as e:
