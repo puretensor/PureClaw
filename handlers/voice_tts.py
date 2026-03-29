@@ -104,12 +104,29 @@ async def text_to_voice_note(text: str) -> bytes | None:
             "ffmpeg", "-i", wav_path, "-c:a", "libopus", "-b:a", "64k",
             "-y", ogg_path,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
         await asyncio.wait_for(proc.wait(), timeout=30)
+        stderr_data = b""
+        try:
+            stderr_reader = getattr(proc, "stderr", None)
+            if stderr_reader and hasattr(stderr_reader, "read"):
+                maybe = stderr_reader.read()
+                if asyncio.iscoroutine(maybe):
+                    maybe = await maybe
+                if isinstance(maybe, (bytes, bytearray)):
+                    stderr_data = bytes(maybe)
+        except Exception:
+            stderr_data = b""
 
         if proc.returncode != 0:
-            log.warning("ffmpeg conversion failed, returncode=%d", proc.returncode)
+            err = stderr_data.decode(errors="replace")[:500] if stderr_data else ""
+            log.warning("ffmpeg conversion failed, returncode=%d stderr=%s", proc.returncode, err)
+            return None
+
+        if not Path(ogg_path).exists():
+            err = stderr_data.decode(errors="replace")[:500] if stderr_data else ""
+            log.warning("ffmpeg reported success but output missing: %s", err)
             return None
 
         ogg_data = Path(ogg_path).read_bytes()

@@ -159,6 +159,7 @@ SUBAGENT_THINKING = os.environ.get("SUBAGENT_THINKING", "false").lower() == "tru
 COMPRESS_TRIGGER_TOKENS = int(os.environ.get("COMPRESS_TRIGGER_TOKENS", "100000"))
 PRESERVE_RECENT_MESSAGES = int(os.environ.get("PRESERVE_RECENT_MESSAGES", "40"))
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gemini-3-flash-preview")
+SUMMARY_BACKEND = os.environ.get("SUMMARY_BACKEND", "gemini_api")
 
 # Security policy
 SECURITY_POLICY_PATH = os.environ.get("SECURITY_POLICY_PATH", "")

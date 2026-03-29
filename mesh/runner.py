@@ -56,26 +56,24 @@ class ClawRunner:
         )
 
         # Message processing queue
-        self._queue: asyncio.Queue | None = None
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._worker_task: asyncio.Task | None = None
 
-    def _handle_message(self, msg) -> dict:
-        """Synchronous callback from mesh server -- enqueue for async processing."""
-        from .message import ClawMessage
-
-        if msg.msg_type == "query" or msg.msg_type == "task":
-            # Process via LLM
-            result = self._process_with_llm(msg)
-            return {"response": result}
-        elif msg.msg_type == "ack":
+    async def _handle_message(self, msg) -> dict:
+        """Queue inbound mesh messages so HTTP handlers return quickly."""
+        if msg.msg_type == "ack":
             log.info("Received ack from %s for message %s", msg.from_claw, msg.reply_to)
             return {"acknowledged": True}
-        elif msg.msg_type == "alert":
-            return self._handle_alert_message(msg)
-        else:
-            log.info("Unhandled message type: %s", msg.msg_type)
-            return {"received": True}
+        await self._queue.put(("message", msg))
+        return {"queued": True, "id": msg.id}
 
-    def _handle_alert(self, data: dict) -> dict:
+    async def _handle_alert(self, data: dict) -> dict:
+        """Queue Alertmanager webhooks off the HTTP request path."""
+        await self._queue.put(("alert_webhook", data))
+        alerts = data.get("alerts", [])
+        return {"queued": len(alerts)}
+
+    def _process_alert_webhook(self, data: dict) -> dict:
         """Handle Alertmanager webhook -- classify and route."""
         alerts = data.get("alerts", [])
         results = []
@@ -158,10 +156,34 @@ class ClawRunner:
             log.error("LLM call failed: %s", e)
             return f"Error: {e}"
 
+    async def _worker_loop(self):
+        """Background worker for queued mesh tasks."""
+        while True:
+            kind, payload = await self._queue.get()
+            try:
+                if kind == "message":
+                    await asyncio.to_thread(self._process_message_item, payload)
+                elif kind == "alert_webhook":
+                    await asyncio.to_thread(self._process_alert_webhook, payload)
+            except Exception as e:
+                log.exception("Mesh worker error: %s", e)
+            finally:
+                self._queue.task_done()
+
+    def _process_message_item(self, msg) -> None:
+        """Process a queued ClawMessage."""
+        if msg.msg_type in ("query", "task"):
+            self._process_with_llm(msg)
+        elif msg.msg_type == "alert":
+            self._handle_alert_message(msg)
+        else:
+            log.info("Unhandled queued message type: %s", msg.msg_type)
+
     async def run(self):
         """Main async entry point -- start server and run forever."""
         # Start mesh HTTP server
         await self._server.start()
+        self._worker_task = asyncio.create_task(self._worker_loop())
 
         # Peer health check on startup
         self._registry.health_check_all(timeout=3.0)
@@ -182,6 +204,12 @@ class ClawRunner:
     async def _shutdown(self):
         """Graceful shutdown."""
         log.info("Claw-%s shutting down...", self._claw_id)
+        if self._worker_task:
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
         await self._server.stop()
         asyncio.get_event_loop().stop()
 

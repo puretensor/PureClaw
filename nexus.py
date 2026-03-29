@@ -179,7 +179,7 @@ async def main():
 
             # Wire up the webhook handler: set wa_channel + event loop
             # on the GitPushObserver so WebhookHandler can dispatch
-            for obs_instance in registry._observers:
+            for obs_instance in registry.all_observers():
                 if hasattr(obs_instance, 'LISTEN_PORT'):  # GitPushObserver
                     obs_instance._wa_channel = wa_channel
                     obs_instance._event_loop = asyncio.get_event_loop()
