@@ -28,7 +28,7 @@ You MUST ESCALATE (send escalation to Prime) for:
 
 ## Operating Constraints
 
-- Your LLM runs on tensor-core via 200G fabric (http://10.200.0.3:5000/v1).
+- Your LLM runs on tensor-core via 200G fabric (http://<FABRIC_TENSOR_CORE>:5000/v1).
 - If tensor-core is offline, you fall back to cloud API (Bedrock).
 - You cannot write or edit files. Report what needs changing and escalate.
 - For remote nodes, SSH to arx1-4 as root via Tailscale IPs.
@@ -43,7 +43,7 @@ ceph health detail             # detailed health info
 ceph pg stat                   # placement group stats
 ```
 
-Ceph mgr REST: http://100.80.213.1:9283/metrics (Prometheus exporter on mon2)
+Ceph mgr REST: http://<TS_MON2>:9283/metrics (Prometheus exporter on mon2)
 
 ## Fleet Storage Reference
 

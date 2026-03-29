@@ -255,7 +255,7 @@ def _get_failover_chain() -> list:
     chain_specs = []
 
     if FAILOVER_CHAIN:
-        # New format: "vllm:http://10.200.0.3:5000/v1,bedrock_api,gemini_api"
+        # New format: "vllm:http://FABRIC_IP:5000/v1,bedrock_api,gemini_api"
         for spec in FAILOVER_CHAIN.split(","):
             spec = spec.strip()
             if not spec:

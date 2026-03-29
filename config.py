@@ -43,7 +43,7 @@ FAILOVER_BACKEND = os.environ.get("FAILOVER_BACKEND", "bedrock_api")
 BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "64000"))
 BEDROCK_THINKING_BUDGET = int(os.environ.get("BEDROCK_THINKING_BUDGET", "0"))
 
-# Multi-level failover chain (comma-separated: "vllm:http://10.200.0.3:5000/v1,bedrock_api,gemini_api")
+# Multi-level failover chain (comma-separated: "vllm:http://FABRIC_IP:5000/v1,bedrock_api,gemini_api")
 FAILOVER_CHAIN = os.environ.get("FAILOVER_CHAIN", "")
 FAILOVER_HEALTH_TIMEOUT = float(os.environ.get("FAILOVER_HEALTH_TIMEOUT", "2.0"))
 VLLM_FALLBACK_URL = os.environ.get("VLLM_FALLBACK_URL", "")

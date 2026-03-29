@@ -50,9 +50,9 @@
 
 - **File:** `prompts/claw_infra_prompt.md`, lines 51–53
 - **Finding:** Every IP address for every primary node is listed in three columns (LAN, Tailscale, 200G fabric):
-  - tensor-core: `192.168.4.217` / `100.121.42.54` / `10.200.0.3`
-  - fox-n0: `192.168.4.184` / `100.69.225.18` / `10.200.0.1`
-  - fox-n1: `192.168.4.50` / `100.103.248.9` / `10.200.0.2`
+  - tensor-core: `<LAN_TENSOR_CORE>` / `<TS_TENSOR_CORE>` / `<FABRIC_TENSOR_CORE>`
+  - fox-n0: `<LAN_FOX_N0>` / `<TS_FOX_N0>` / `<FABRIC_FOX_N0>`
+  - fox-n1: `<LAN_FOX_N1>` / `<TS_FOX_N1>` / `<FABRIC_FOX_N1>`
 - **Impact:** Confirms exact node locations on the LAN and 200G fabric. Combined with the BMC password (CRITICAL-1), this enables targeted attacks. Even without CRITICAL-1, it exposes network topology.
 - **Recommendation:** Replace with hostname references only. Remove LAN IPs (192.168.x.x) and fabric IPs (10.200.0.x) from the prompt file — the agent can resolve hostnames at runtime.
 
@@ -62,10 +62,10 @@
 
 - **File:** `k8s/configmap.yaml`, lines 9, 22, 45–48, 52–53, 56–57
 - **Finding:** Tailscale IPs for every internal service are hardcoded:
-  - tensor-core (vLLM, Vision, Whisper, TTS, Ollama, SSH): `100.121.42.54`
-  - mon2 (Prometheus, Alertmanager): `100.80.213.1`
-  - mon1 (Gitea): `100.92.245.5`
-  - SearXNG instance: `100.105.43.27`
+  - tensor-core (vLLM, Vision, Whisper, TTS, Ollama, SSH): `<TS_TENSOR_CORE>`
+  - mon2 (Prometheus, Alertmanager): `<TS_MON2>`
+  - mon1 (Gitea): `<TS_MON1>`
+  - SearXNG instance: `<TS_IP_REDACTED>`
 - **Also in:** `deploy/claw-infra.env:5`, `deploy/claw-ops.env:5`, `deploy/claw-sentinel.env:5`
 - **Also in:** `mesh/registry.py:47` (example comment), `tools/nexus-terminal.py:48` (`DEFAULT_HOST`)
 - **Also in:** `observers/alertmanager_monitor.py` / config references
@@ -79,7 +79,7 @@
 - **Files:** `deploy/claw-infra.env`, `deploy/claw-ops.env`, `deploy/claw-sentinel.env`
 - **First committed:** `4cfa8e9` (2026-03-21)
 - **Finding:** These are real deployment environment files — not templates — containing actual Tailscale IPs, fabric IPs, service ports, and filesystem paths for the production deployment. Although bot tokens are set to `SET_ME`, the network topology data is real.
-- **Additionally:** `AUTHORIZED_USER_ID=22276981` appears in all three files. This is a real Telegram user ID permanently committed to git history (present in history even after any edits).
+- **Additionally:** `AUTHORIZED_USER_ID=<TELEGRAM_CHAT_ID>` appears in all three files. This is a real Telegram user ID permanently committed to git history (present in history even after any edits).
 - **Recommendation:** Add `deploy/*.env` to `.gitignore`. The `.gitignore` currently excludes `.env` and `.env.*` but not `deploy/*.env`. Replace with `deploy/*.env.example` template files with placeholder values.
 
 ---

@@ -6,7 +6,7 @@ from dispatcher.apis import get_session, ttl_cache, DispatchError
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://YOUR_PROMETHEUS_IP:9090")
 
 # Display-friendly names for Prometheus instance labels
-# Loaded from NODE_NAMES env var as JSON, e.g.: {"192.168.4.217:9100":"tensor-core",...}
+# Loaded from NODE_NAMES env var as JSON, e.g.: {"<LAN_IP>:9100":"tensor-core",...}
 # Falls back to empty dict if not set (status queries will return raw instance labels)
 import json as _json
 

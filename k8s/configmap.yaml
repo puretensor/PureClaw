@@ -6,7 +6,7 @@ metadata:
 data:
   # Engine — NVIDIA Nemotron Super (primary)
   ENGINE_BACKEND: "vllm"
-  VLLM_URL: "http://100.121.42.54:5000/v1"
+  VLLM_URL: "http://<TS_TENSOR_CORE>:5000/v1"
   VLLM_MODEL: "nvidia/nemotron-3-super"
   VLLM_MAX_TOKENS: "32768"
   VLLM_TOOLS_ENABLED: "true"
@@ -15,11 +15,11 @@ data:
   VLLM_TOTAL_TIMEOUT: "600"
 
   # Multi-level failover: 200G fabric vLLM -> Bedrock -> Gemini
-  FAILOVER_CHAIN: "vllm:http://10.200.0.3:5000/v1,bedrock_api,gemini_api"
+  FAILOVER_CHAIN: "vllm:http://<FABRIC_TENSOR_CORE>:5000/v1,bedrock_api,gemini_api"
   FAILOVER_HEALTH_TIMEOUT: "2"
 
   # Vision — NVIDIA Nemotron Nano VL (local, GPU 1, image preprocessing)
-  VISION_URL: "http://100.121.42.54:5001/v1"
+  VISION_URL: "http://<TS_TENSOR_CORE>:5001/v1"
   VISION_MODEL: "nvidia/nemotron-nano-vl"
   VISION_ENABLED: "true"
 
@@ -42,19 +42,19 @@ data:
   DARWIN_SNAPSHOT_PATH: "/data/state/darwin_state.json"
 
   # TC services (via Tailscale from fox-n1)
-  TC_SSH_HOST: "100.121.42.54"
-  WHISPER_URL: "http://100.121.42.54:9000/transcribe"
-  TTS_URL: "http://100.121.42.54:5580"
-  OLLAMA_URL: "http://100.121.42.54:11434"
+  TC_SSH_HOST: "<TS_TENSOR_CORE>"
+  WHISPER_URL: "http://<TS_TENSOR_CORE>:9000/transcribe"
+  TTS_URL: "http://<TS_TENSOR_CORE>:5580"
+  OLLAMA_URL: "http://<TS_TENSOR_CORE>:11434"
   OLLAMA_MODEL: "qwen3:30b-a3b"
 
   # Monitoring
-  PROMETHEUS_URL: "http://100.80.213.1:9090"
-  ALERTMANAGER_URL: "http://100.80.213.1:9093"
+  PROMETHEUS_URL: "http://<TS_MON2>:9090"
+  ALERTMANAGER_URL: "http://<TS_MON2>:9093"
 
   # Infrastructure
-  GITEA_URL: "http://100.92.245.5:3002"
-  SEARXNG_URL: "http://100.105.43.27:8080/search"
+  GITEA_URL: "http://<TS_MON1>:3002"
+  SEARXNG_URL: "http://<TS_IP_REDACTED>:8080/search"
 
   # Agent identity
   AGENT_NAME: "PureClaw"
