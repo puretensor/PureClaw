@@ -5,7 +5,7 @@ import hashlib
 import sqlite3
 from datetime import datetime, timezone
 
-from config import DB_PATH, AUTHORIZED_USER_ID, log
+from config import DB_PATH, AUTHORIZED_USER_ID, ENGINE_BACKEND, log
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +84,10 @@ def init_db():
         con.execute("ALTER TABLE sessions_v2 RENAME TO sessions")
         log.info("Migration complete")
 
-    # Add backend column for hybrid routing session affinity
+    # Add backend column for session-scoped backend routing
     session_cols = [row[1] for row in con.execute("PRAGMA table_info(sessions)").fetchall()]
     if "backend" not in session_cols:
-        con.execute("ALTER TABLE sessions ADD COLUMN backend TEXT DEFAULT 'api'")
+        con.execute(f"ALTER TABLE sessions ADD COLUMN backend TEXT DEFAULT '{ENGINE_BACKEND}'")
         log.info("Added 'backend' column to sessions table")
 
     # Scheduled tasks table
@@ -407,7 +407,7 @@ def get_session(chat_id: int) -> dict | None:
     recently used session if multiple exist."""
     con = _connect()
     row = con.execute(
-        """SELECT session_id, model, message_count, created_at, name, summary, last_used
+        """SELECT session_id, model, message_count, created_at, name, summary, last_used, backend
            FROM sessions
            WHERE chat_id = ? AND archived_at IS NULL
            ORDER BY last_used DESC NULLS LAST, id DESC
@@ -425,16 +425,24 @@ def get_session(chat_id: int) -> dict | None:
         "name": row[4],
         "summary": row[5],
         "last_used": row[6],
+        "backend": row[7] or ENGINE_BACKEND,
     }
 
 
-def upsert_session(chat_id: int, session_id: str, model: str, message_count: int):
+def upsert_session(
+    chat_id: int,
+    session_id: str,
+    model: str,
+    message_count: int,
+    backend: str | None = None,
+):
     """Update the active session for a chat. Creates 'default' if none exists."""
     now = _now()
+    backend = backend or ENGINE_BACKEND
     con = _connect()
     # Find the active session
     row = con.execute(
-        """SELECT id, name FROM sessions
+        """SELECT id, name, backend FROM sessions
            WHERE chat_id = ? AND archived_at IS NULL
            ORDER BY last_used DESC NULLS LAST, id DESC
            LIMIT 1""",
@@ -443,15 +451,15 @@ def upsert_session(chat_id: int, session_id: str, model: str, message_count: int
 
     if row:
         con.execute(
-            """UPDATE sessions SET session_id = ?, model = ?, message_count = ?, last_used = ?
+            """UPDATE sessions SET session_id = ?, model = ?, message_count = ?, last_used = ?, backend = ?
                WHERE id = ?""",
-            (session_id, model, message_count, now, row[0]),
+            (session_id, model, message_count, now, backend or row[2] or ENGINE_BACKEND, row[0]),
         )
     else:
         con.execute(
-            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used)
-               VALUES (?, 'default', ?, ?, ?, ?, ?)""",
-            (chat_id, session_id, model, message_count, now, now),
+            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used, backend)
+               VALUES (?, 'default', ?, ?, ?, ?, ?, ?)""",
+            (chat_id, session_id, model, message_count, now, now, backend),
         )
     con.commit()
     con.close()
@@ -476,12 +484,13 @@ def reset_session_id(chat_id: int):
     con.close()
 
 
-def update_model(chat_id: int, model: str):
+def update_model(chat_id: int, model: str, backend: str | None = None):
     """Update the model for the active session. Creates 'default' if none exists."""
     now = _now()
+    backend = backend or ENGINE_BACKEND
     con = _connect()
     row = con.execute(
-        """SELECT id FROM sessions
+        """SELECT id, backend FROM sessions
            WHERE chat_id = ? AND archived_at IS NULL
            ORDER BY last_used DESC NULLS LAST, id DESC
            LIMIT 1""",
@@ -489,15 +498,54 @@ def update_model(chat_id: int, model: str):
     ).fetchone()
 
     if row:
-        con.execute("UPDATE sessions SET model = ?, last_used = ? WHERE id = ?", (model, now, row[0]))
+        con.execute(
+            "UPDATE sessions SET model = ?, last_used = ?, backend = ? WHERE id = ?",
+            (model, now, backend or row[1] or ENGINE_BACKEND, row[0]),
+        )
     else:
         con.execute(
-            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used)
-               VALUES (?, 'default', NULL, ?, 0, ?, ?)""",
-            (chat_id, model, now, now),
+            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used, backend)
+               VALUES (?, 'default', NULL, ?, 0, ?, ?, ?)""",
+            (chat_id, model, now, now, backend),
         )
     con.commit()
     con.close()
+
+
+def update_backend(chat_id: int, backend: str, *, reset_session: bool = True) -> bool:
+    """Update the active session backend.
+
+    Returns True if the backend changed. When no active session exists, one is
+    created with the requested backend.
+    """
+    now = _now()
+    con = _connect()
+    row = con.execute(
+        """SELECT id, backend, model FROM sessions
+           WHERE chat_id = ? AND archived_at IS NULL
+           ORDER BY last_used DESC NULLS LAST, id DESC
+           LIMIT 1""",
+        (chat_id,),
+    ).fetchone()
+
+    if row:
+        changed = (row[1] or ENGINE_BACKEND) != backend
+        fields = ["backend = ?", "last_used = ?"]
+        params: list = [backend, now]
+        if changed and reset_session:
+            fields.extend(["session_id = NULL", "message_count = 0"])
+        params.append(row[0])
+        con.execute(f"UPDATE sessions SET {', '.join(fields)} WHERE id = ?", params)
+    else:
+        changed = True
+        con.execute(
+            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used, backend)
+               VALUES (?, 'default', NULL, 'sonnet', 0, ?, ?, ?)""",
+            (chat_id, now, now, backend),
+        )
+    con.commit()
+    con.close()
+    return changed
 
 
 def delete_session(chat_id: int):
@@ -524,7 +572,7 @@ def get_session_by_name(chat_id: int, name: str) -> dict | None:
     """Get a specific named session (active or archived)."""
     con = _connect()
     row = con.execute(
-        """SELECT id, session_id, model, message_count, created_at, name, summary, last_used, archived_at
+        """SELECT id, session_id, model, message_count, created_at, name, summary, last_used, archived_at, backend
            FROM sessions WHERE chat_id = ? AND name = ?""",
         (chat_id, name),
     ).fetchone()
@@ -541,6 +589,7 @@ def get_session_by_name(chat_id: int, name: str) -> dict | None:
         "summary": row[6],
         "last_used": row[7],
         "archived_at": row[8],
+        "backend": row[9] or ENGINE_BACKEND,
     }
 
 
@@ -548,7 +597,7 @@ def list_sessions(chat_id: int) -> list[dict]:
     """List all active (non-archived) sessions for a chat."""
     con = _connect()
     rows = con.execute(
-        """SELECT id, session_id, model, message_count, created_at, name, summary, last_used
+        """SELECT id, session_id, model, message_count, created_at, name, summary, last_used, backend
            FROM sessions
            WHERE chat_id = ? AND archived_at IS NULL
            ORDER BY last_used DESC NULLS LAST""",
@@ -565,18 +614,20 @@ def list_sessions(chat_id: int) -> list[dict]:
             "name": r[5],
             "summary": r[6],
             "last_used": r[7],
+            "backend": r[8] or ENGINE_BACKEND,
         }
         for r in rows
     ]
 
 
-def switch_session(chat_id: int, name: str, model: str = "sonnet") -> dict:
+def switch_session(chat_id: int, name: str, model: str = "sonnet", backend: str | None = None) -> dict:
     """Switch to a named session. Creates it if it doesn't exist.
     Returns the session dict."""
     now = _now()
+    backend = backend or ENGINE_BACKEND
     con = _connect()
     row = con.execute(
-        """SELECT id, session_id, model, message_count, created_at, summary, last_used, archived_at
+        """SELECT id, session_id, model, message_count, created_at, summary, last_used, archived_at, backend
            FROM sessions WHERE chat_id = ? AND name = ?""",
         (chat_id, name),
     ).fetchone()
@@ -598,12 +649,13 @@ def switch_session(chat_id: int, name: str, model: str = "sonnet") -> dict:
             "name": name,
             "summary": row[5],
             "last_used": now,
+            "backend": row[8] or backend,
         }
     else:
         con.execute(
-            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used)
-               VALUES (?, ?, NULL, ?, 0, ?, ?)""",
-            (chat_id, name, model, now, now),
+            """INSERT INTO sessions (chat_id, name, session_id, model, message_count, created_at, last_used, backend)
+               VALUES (?, ?, NULL, ?, 0, ?, ?, ?)""",
+            (chat_id, name, model, now, now, backend),
         )
         result = {
             "id": con.execute("SELECT last_insert_rowid()").fetchone()[0],
@@ -614,6 +666,7 @@ def switch_session(chat_id: int, name: str, model: str = "sonnet") -> dict:
             "name": name,
             "summary": None,
             "last_used": now,
+            "backend": backend,
         }
 
     con.commit()
@@ -671,7 +724,7 @@ def list_archived(chat_id: int, limit: int = 10) -> list[dict]:
     """List archived sessions, most recently archived first."""
     con = _connect()
     rows = con.execute(
-        """SELECT id, session_id, model, message_count, created_at, name, summary, last_used, archived_at
+        """SELECT id, session_id, model, message_count, created_at, name, summary, last_used, archived_at, backend
            FROM sessions
            WHERE chat_id = ? AND archived_at IS NOT NULL
            ORDER BY archived_at DESC
@@ -690,6 +743,7 @@ def list_archived(chat_id: int, limit: int = 10) -> list[dict]:
             "summary": r[6],
             "last_used": r[7],
             "archived_at": r[8],
+            "backend": r[9] or ENGINE_BACKEND,
         }
         for r in rows
     ]
@@ -700,7 +754,7 @@ def restore_session(chat_id: int, session_db_id: int) -> dict | None:
     now = _now()
     con = _connect()
     row = con.execute(
-        """SELECT id, session_id, model, message_count, created_at, name, summary
+        """SELECT id, session_id, model, message_count, created_at, name, summary, backend
            FROM sessions WHERE id = ? AND chat_id = ? AND archived_at IS NOT NULL""",
         (session_db_id, chat_id),
     ).fetchone()
@@ -719,6 +773,7 @@ def restore_session(chat_id: int, session_db_id: int) -> dict | None:
         "name": row[5],
         "summary": row[6],
         "last_used": now,
+        "backend": row[7] or ENGINE_BACKEND,
     }
 
 

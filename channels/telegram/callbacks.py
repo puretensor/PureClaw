@@ -100,24 +100,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             backend_name = parts[1]
             model_name = parts[2]
 
-            import config
-            from backends import reset_backend
-            from db import update_model, reset_session_id
+            from db import update_backend, update_model
             from engine import get_model_display
 
             chat_id = update.effective_chat.id
 
-            # Switch backend if needed — reset session_id since IDs are
-            # backend-specific (Claude session != Gemini session)
-            if config.ENGINE_BACKEND != backend_name:
-                config.ENGINE_BACKEND = backend_name
-                reset_backend()
-                reset_session_id(chat_id)
+            update_backend(chat_id, backend_name)
+            update_model(chat_id, model_name, backend=backend_name)
 
-            # Update model in session
-            update_model(chat_id, model_name)
-
-            display = get_model_display(model_name)
+            display = get_model_display(model_name, backend_name=backend_name)
             if backend_name == "vllm":
                 label = "NVIDIA Nemotron Super (local)"
             elif backend_name == "ollama":
@@ -178,6 +169,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     session["session_id"],
                     session["model"],
                     streaming_editor=editor,
+                    chat_id=chat_id,
+                    channel="telegram",
                 )
                 if editor.text:
                     await editor.finalize()
@@ -194,6 +187,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     session["session_id"],
                     session["model"],
                     streaming_editor=editor,
+                    chat_id=chat_id,
+                    channel="telegram",
                 )
                 if editor.text:
                     await editor.finalize()
@@ -210,6 +205,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     session["session_id"],
                     session["model"],
                     streaming_editor=editor,
+                    chat_id=chat_id,
+                    channel="telegram",
                 )
                 if editor.text:
                     await editor.finalize()
@@ -226,6 +223,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     session["session_id"],
                     session["model"],
                     streaming_editor=editor,
+                    chat_id=chat_id,
+                    channel="telegram",
                 )
                 if editor.text:
                     await editor.finalize()
@@ -242,6 +241,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     session["session_id"],
                     session["model"],
                     streaming_editor=editor,
+                    chat_id=chat_id,
+                    channel="telegram",
                 )
                 if editor.text:
                     await editor.finalize()
