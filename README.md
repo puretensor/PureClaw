@@ -17,6 +17,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+If you use mesh, Alertmanager, or the WhatsApp bridge, also configure `MESH_SHARED_SECRET`, `ALERTMANAGER_WEBHOOK_SECRET`, and `WA_WEBHOOK_SECRET` as described in [`deploy/hardening_rollout.md`](deploy/hardening_rollout.md).
+
 Set two required values in `.env`:
 
 ```bash
