@@ -17,6 +17,13 @@ with patch.dict("os.environ", {
     from handlers.summaries import maybe_generate_summary, _generate_summary, SUMMARY_INTERVAL
 
 
+def _close_created_task(coro):
+    """Close background coroutine objects when create_task is mocked."""
+    if hasattr(coro, "close"):
+        coro.close()
+    return MagicMock(name="summary_task")
+
+
 # ---------------------------------------------------------------------------
 # maybe_generate_summary — interval gating
 # ---------------------------------------------------------------------------
@@ -27,7 +34,7 @@ class TestMaybeGenerateSummary:
     async def test_no_session_does_nothing(self):
         """No active session means no summary generation."""
         with patch("handlers.summaries.get_session", return_value=None) as mock_get, \
-             patch("handlers.summaries.asyncio.create_task") as mock_task:
+             patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
             await maybe_generate_summary(99999)
             mock_get.assert_called_once_with(99999)
             mock_task.assert_not_called()
@@ -37,7 +44,7 @@ class TestMaybeGenerateSummary:
         """Session without session_id means no summary generation."""
         session = {"session_id": None, "message_count": 5}
         with patch("handlers.summaries.get_session", return_value=session), \
-             patch("handlers.summaries.asyncio.create_task") as mock_task:
+             patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
             await maybe_generate_summary(12345)
             mock_task.assert_not_called()
 
@@ -46,7 +53,7 @@ class TestMaybeGenerateSummary:
         """Message count of 0 does not trigger summary."""
         session = {"session_id": "sess-123", "message_count": 0}
         with patch("handlers.summaries.get_session", return_value=session), \
-             patch("handlers.summaries.asyncio.create_task") as mock_task:
+             patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
             await maybe_generate_summary(12345)
             mock_task.assert_not_called()
 
@@ -56,7 +63,7 @@ class TestMaybeGenerateSummary:
         for count in [1, 2, 3, 4, 6, 7, 8, 9, 11]:
             session = {"session_id": "sess-123", "message_count": count}
             with patch("handlers.summaries.get_session", return_value=session), \
-                 patch("handlers.summaries.asyncio.create_task") as mock_task:
+                 patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
                 await maybe_generate_summary(12345)
                 mock_task.assert_not_called(), f"Should not trigger for count={count}"
 
@@ -65,7 +72,7 @@ class TestMaybeGenerateSummary:
         """Message count at SUMMARY_INTERVAL triggers background task."""
         session = {"session_id": "sess-abc", "message_count": SUMMARY_INTERVAL}
         with patch("handlers.summaries.get_session", return_value=session), \
-             patch("handlers.summaries.asyncio.create_task") as mock_task:
+             patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
             await maybe_generate_summary(12345)
             mock_task.assert_called_once()
 
@@ -74,7 +81,7 @@ class TestMaybeGenerateSummary:
         """Message count at 2x SUMMARY_INTERVAL also triggers."""
         session = {"session_id": "sess-abc", "message_count": SUMMARY_INTERVAL * 2}
         with patch("handlers.summaries.get_session", return_value=session), \
-             patch("handlers.summaries.asyncio.create_task") as mock_task:
+             patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
             await maybe_generate_summary(12345)
             mock_task.assert_called_once()
 
@@ -83,7 +90,7 @@ class TestMaybeGenerateSummary:
         """Session dict without message_count key defaults to 0, does nothing."""
         session = {"session_id": "sess-abc"}
         with patch("handlers.summaries.get_session", return_value=session), \
-             patch("handlers.summaries.asyncio.create_task") as mock_task:
+             patch("handlers.summaries.asyncio.create_task", side_effect=_close_created_task) as mock_task:
             await maybe_generate_summary(12345)
             mock_task.assert_not_called()
 
