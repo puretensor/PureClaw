@@ -7,6 +7,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import express from 'express';
 import pino from 'pino';
+import crypto from 'crypto';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ const INSTANCE_NAME = process.env.WA_INSTANCE || 'wa-1';
 const BOT_PHONE     = process.env.BOT_PHONE || '';
 const HTTP_PORT     = parseInt(process.env.HTTP_PORT || '3100', 10);
 const NEXUS_WEBHOOK = process.env.NEXUS_WEBHOOK || 'http://127.0.0.1:9876/wa/incoming';
+const NEXUS_SHARED_SECRET = process.env.WA_WEBHOOK_SECRET || '';
 const AUTH_DIR      = process.env.AUTH_DIR || './auth';
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -122,10 +124,20 @@ app.listen(HTTP_PORT, '0.0.0.0', () => {
 
 async function postToNexus(payload) {
   try {
+    const body = JSON.stringify(payload);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = crypto
+      .createHmac('sha256', NEXUS_SHARED_SECRET)
+      .update(`${timestamp}.${body}`)
+      .digest('hex');
     const resp = await fetch(NEXUS_WEBHOOK, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Nexus-Timestamp': timestamp,
+        'X-Nexus-Signature': `sha256=${signature}`,
+      },
+      body,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) {

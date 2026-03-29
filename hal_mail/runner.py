@@ -316,6 +316,15 @@ class HalMailRunner:
         model = profile.get("model") or "default"
         personality = profile.get("personality", "")
 
+        if backend_name in {"claude_code", "codex_cli", "gemini_cli"}:
+            log.error(
+                "Unsafe CLI backend '%s' rejected for autonomous email reply to %s",
+                backend_name,
+                sender_addr,
+            )
+            await self._send_notification(em, tag="UNSAFE-BACKEND")
+            return
+
         backend = self._backends.get(backend_name)
         if not backend:
             log.error(
@@ -340,6 +349,7 @@ class HalMailRunner:
             session = get_session(chat_id)
             session_id = session["session_id"] if session else None
             msg_count = session["message_count"] if session else 0
+            session_backend = session.get("backend") if session else backend_name
 
             user_message = (
                 f"[Email from {em['from']}]\n"
@@ -363,6 +373,8 @@ class HalMailRunner:
             memory_ctx = self._build_memory_context()
 
             try:
+                from backends.tools import ToolExecutionContext
+
                 data = await backend.call_streaming(
                     user_message,
                     session_id=session_id,
@@ -371,6 +383,11 @@ class HalMailRunner:
                     system_prompt=SYSTEM_PROMPT,
                     memory_context=memory_ctx,
                     extra_system_prompt=extra_sp,
+                    tool_context=ToolExecutionContext(
+                        policy_profile="reply_only",
+                        session_id=session_id,
+                        channel="email_auto",
+                    ),
                 )
                 reply_body = data.get("result", "").strip()
                 new_session_id = data.get("session_id", session_id)
@@ -397,7 +414,8 @@ class HalMailRunner:
                 reply_body = reply_body[:max_len]
 
             # Persist session for sender continuity
-            upsert_session(chat_id, new_session_id, model, msg_count + 1)
+            upsert_kwargs = {"backend": session_backend} if session_backend is not None else {}
+            upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
 
         # Send reply via gmail.py
         try:

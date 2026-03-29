@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from observers.base import Observer, ObserverResult
+from security.machine_auth import verify_headers
 
 log = logging.getLogger("nexus")
 
@@ -283,6 +284,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(content_length)
+        secret = os.environ.get("WA_WEBHOOK_SECRET", "")
+        allowed, reason = verify_headers(body, self.headers, secret)
+        if not allowed:
+            self.send_response(503 if "not configured" in reason else 403)
+            self.end_headers()
+            self.wfile.write(reason.encode())
+            return
 
         try:
             payload = json.loads(body)

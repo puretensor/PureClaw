@@ -1,7 +1,7 @@
 """Engine — LLM backend facade, stream reader, and message splitting.
 
 Public API: call_sync(), call_streaming(), split_message()
-Backend selection: ENGINE_BACKEND env var (default: claude_code)
+Backend selection defaults to ENGINE_BACKEND but can be overridden per session.
 
 Utilities (_read_stream, _format_tool_status, split_message) remain here
 for backward compatibility and are used by the claude_code backend.
@@ -320,14 +320,42 @@ def _get_chain_backend(spec: dict):
     return spec["instance"]
 
 
-def get_model_display(model: str = CLAUDE_MODEL) -> str:
+def _resolve_backend_name(
+    backend_name: str | None = None,
+    chat_id: int | None = None,
+) -> str:
+    """Resolve the effective backend for a request."""
+    if backend_name:
+        return backend_name
+
+    if chat_id is not None:
+        try:
+            from db import get_session
+
+            session = get_session(chat_id)
+            if session and session.get("backend"):
+                return session.get("backend")
+        except Exception:
+            pass
+
+    from config import ENGINE_BACKEND
+
+    return ENGINE_BACKEND
+
+
+def get_model_display(
+    model: str = CLAUDE_MODEL,
+    *,
+    backend_name: str | None = None,
+    chat_id: int | None = None,
+) -> str:
     """Return a human-readable label for the current backend + model.
 
     E.g. 'Claude Sonnet' for claude_code, 'qwen3:30b-a3b' for ollama.
     """
     from backends import get_backend
 
-    backend = get_backend()
+    backend = get_backend(_resolve_backend_name(backend_name, chat_id))
     if hasattr(backend, "get_model_display"):
         return backend.get_model_display(model)
     return f"{backend.name}:{model}"
@@ -338,6 +366,10 @@ def call_sync(
     model: str = CLAUDE_MODEL,
     session_id: str | None = None,
     timeout: int = 300,
+    backend_name: str | None = None,
+    chat_id: int | None = None,
+    channel: str | None = None,
+    tool_profile: str = "admin",
 ) -> dict:
     """Synchronous LLM call (for observers running in thread pool).
 
@@ -345,10 +377,38 @@ def call_sync(
     Automatically fails over to Bedrock if primary backend errors.
     """
     import time as _time
-    from backends import get_backend
+    from backends import CLI_BACKENDS, get_backend
+    from backends.tools import ToolExecutionContext
 
-    backend = get_backend()
+    # Inference guard: model allowlist check
+    try:
+        from security.inference import get_inference_guard
+
+        guard = get_inference_guard()
+        allowed, reason = guard.check_model(model)
+        if not allowed:
+            log.warning("Inference guard blocked model '%s': %s", model, reason)
+            return {"result": f"Error: {reason}", "session_id": session_id}
+    except Exception:
+        pass
+
+    backend_name = _resolve_backend_name(backend_name, chat_id)
+    if tool_profile != "admin" and backend_name in CLI_BACKENDS:
+        return {
+            "result": (
+                f"Error: backend '{backend_name}' is not allowed for restricted channel "
+                f"profile '{tool_profile}'"
+            ),
+            "session_id": session_id,
+        }
+
+    backend = get_backend(backend_name)
     t0 = _time.monotonic()
+    tool_context = ToolExecutionContext(
+        policy_profile=tool_profile,
+        session_id=session_id,
+        channel=channel,
+    )
 
     try:
         result = backend.call_sync(
@@ -357,6 +417,7 @@ def call_sync(
             session_id=session_id,
             timeout=timeout,
             system_prompt=SYSTEM_PROMPT,
+            tool_context=tool_context,
         )
         # Check for error results from backends that return errors as dicts
         if result.get("error"):
@@ -388,6 +449,7 @@ def call_sync(
                     session_id=None,
                     timeout=timeout,
                     system_prompt=SYSTEM_PROMPT,
+                    tool_context=tool_context,
                 )
                 result["_failover"] = True
                 result["_failover_backend"] = fb.name
@@ -395,7 +457,7 @@ def call_sync(
                 duration = int((_time.monotonic() - t0) * 1000)
                 try:
                     from security.audit import log_llm_call
-                    log_llm_call(None, None, fb.name, fb_model, None, duration)
+                    log_llm_call(None, channel, fb.name, fb_model, None, duration)
                 except Exception:
                     pass
                 return result
@@ -409,7 +471,7 @@ def call_sync(
 
     try:
         from security.audit import log_llm_call
-        log_llm_call(session_id, None, backend.name, model, None, duration)
+        log_llm_call(session_id, channel, backend.name, model, None, duration)
     except Exception:
         pass
 
@@ -462,6 +524,9 @@ async def call_streaming(
     streaming_editor=None,
     extra_system_prompt: str | None = None,
     chat_id: int | None = None,
+    backend_name: str | None = None,
+    channel: str | None = None,
+    tool_profile: str = "admin",
 ) -> dict:
     """Async streaming LLM call with real-time progress.
 
@@ -469,7 +534,8 @@ async def call_streaming(
     Automatically fails over to Bedrock Sonnet if primary backend errors.
     """
     import time as _time
-    from backends import get_backend
+    from backends import CLI_BACKENDS, get_backend
+    from backends.tools import ToolExecutionContext
 
     # Inference guard: model allowlist check
     try:
@@ -484,8 +550,24 @@ async def call_streaming(
 
     memory_ctx = _build_memory_context(chat_id)
 
-    backend = get_backend()
+    backend_name = _resolve_backend_name(backend_name, chat_id)
+    if tool_profile != "admin" and backend_name in CLI_BACKENDS:
+        return {
+            "result": (
+                f"Error: backend '{backend_name}' is not allowed for restricted channel "
+                f"profile '{tool_profile}'"
+            ),
+            "session_id": session_id,
+            "written_files": [],
+        }
+
+    backend = get_backend(backend_name)
     t0 = _time.monotonic()
+    tool_context = ToolExecutionContext(
+        policy_profile=tool_profile,
+        session_id=session_id,
+        channel=channel,
+    )
 
     try:
         result = await backend.call_streaming(
@@ -497,6 +579,7 @@ async def call_streaming(
             system_prompt=SYSTEM_PROMPT,
             memory_context=memory_ctx,
             extra_system_prompt=extra_system_prompt,
+            tool_context=tool_context,
         )
     except Exception as primary_err:
         log.error("Primary backend (%s) streaming failed: %s", backend.name, primary_err)
@@ -540,6 +623,7 @@ async def call_streaming(
                     system_prompt=SYSTEM_PROMPT,
                     memory_context=memory_ctx,
                     extra_system_prompt=extra_system_prompt,
+                    tool_context=tool_context,
                 )
                 result["_failover"] = True
                 result["_failover_backend"] = fb.name
@@ -547,7 +631,7 @@ async def call_streaming(
                 duration = int((_time.monotonic() - t0) * 1000)
                 try:
                     from security.audit import log_llm_call
-                    log_llm_call(None, None, fb.name, fb_model, None, duration)
+                    log_llm_call(None, channel, fb.name, fb_model, None, duration)
                 except Exception:
                     pass
                 return result
@@ -565,7 +649,7 @@ async def call_streaming(
 
     try:
         from security.audit import log_llm_call
-        log_llm_call(session_id, None, backend.name, model, None, duration)
+        log_llm_call(session_id, channel, backend.name, model, None, duration)
     except Exception:
         pass
 

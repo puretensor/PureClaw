@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Callable
 
 from aiohttp import web
 
 from .message import ClawMessage
+from security.machine_auth import verify_headers
 
 log = logging.getLogger("nexus.mesh")
 
@@ -77,8 +79,15 @@ class MeshServer:
         })
 
     async def _handle_message(self, request: web.Request) -> web.Response:
+        body = await request.read()
+        mesh_secret = os.environ.get("MESH_SHARED_SECRET", "")
+        allowed, reason = verify_headers(body, request.headers, mesh_secret)
+        if not allowed:
+            status = 503 if "not configured" in reason else 403
+            return web.json_response({"error": reason}, status=status)
+
         try:
-            data = await request.json()
+            data = json.loads(body.decode())
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
@@ -103,6 +112,8 @@ class MeshServer:
         if self._on_message:
             try:
                 result = self._on_message(msg)
+                if asyncio.iscoroutine(result):
+                    result = await result
                 return web.json_response({"status": "ok", "result": result})
             except Exception as e:
                 log.error("Message handler error: %s", e)
@@ -112,8 +123,15 @@ class MeshServer:
 
     async def _handle_alertmanager(self, request: web.Request) -> web.Response:
         """Receive Alertmanager webhook payload."""
+        body = await request.read()
+        alert_secret = os.environ.get("ALERTMANAGER_WEBHOOK_SECRET", "")
+        allowed, reason = verify_headers(body, request.headers, alert_secret)
+        if not allowed:
+            status = 503 if "not configured" in reason else 403
+            return web.json_response({"error": reason}, status=status)
+
         try:
-            data = await request.json()
+            data = json.loads(body.decode())
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
@@ -123,6 +141,8 @@ class MeshServer:
         if self._on_alert:
             try:
                 result = self._on_alert(data)
+                if asyncio.iscoroutine(result):
+                    result = await result
                 return web.json_response({"status": "ok", "processed": len(alerts), "result": result})
             except Exception as e:
                 log.error("Alert handler error: %s", e)

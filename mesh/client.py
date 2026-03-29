@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.request
 import urllib.error
 
 from .message import ClawMessage
 from .registry import ClawRegistry
+from security.machine_auth import sign_payload
 
 log = logging.getLogger("nexus.mesh")
 
@@ -66,6 +68,10 @@ class ClawClient:
 
         endpoint = f"{url}/mesh/message"
         data = msg.to_json().encode()
+        mesh_secret = os.environ.get("MESH_SHARED_SECRET", "")
+        if not mesh_secret:
+            return {"error": "MESH_SHARED_SECRET not configured"}
+        auth_headers = sign_payload(data, mesh_secret)
 
         log.info(
             "Mesh send: %s -> %s [%s] priority=%d",
@@ -76,7 +82,7 @@ class ClawClient:
             req = urllib.request.Request(
                 endpoint,
                 data=data,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **auth_headers},
                 method="POST",
             )
             effective_timeout = timeout if wait else 5

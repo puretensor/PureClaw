@@ -96,7 +96,8 @@ EMAIL_SYSTEM_PROMPT_TEMPLATE = (
     "- Your text output IS the reply. It will be sent automatically to the sender.\n"
     "- NEVER use gmail.py, smtp, or any tool to send/reply to emails yourself.\n"
     "- NEVER send emails to anyone other than the sender — no CC, no BCC, no separate notifications.\n"
-    "- If you need to take actions (delete WP posts, research, etc.), do that silently with tools.\n"
+    "- You are on a restricted reply-only tool profile. You may use read/search tools for context,\n"
+    "  but MUST NOT take mutating actions, send emails, modify files, or trigger deployments.\n"
     "- Then write your response as a direct reply to the sender. That's all.\n"
     "- Do NOT narrate what you did to a third party. Just reply to the sender.\n\n"
     "RESPONSE STYLE:\n"
@@ -523,6 +524,7 @@ class EmailInputChannel(Channel):
             session_id = session["session_id"] if session else None
             model = session["model"] if session else "sonnet"
             msg_count = session["message_count"] if session else 0
+            backend_name = session.get("backend") if session else None
 
             user_message = (
                 f"[Email from {em['from']}]\n"
@@ -539,9 +541,15 @@ class EmailInputChannel(Channel):
 
             try:
                 data = await call_streaming(
-                    user_message, session_id, model,
+                    user_message,
+                    session_id,
+                    model,
                     streaming_editor=None,
                     extra_system_prompt=extra_sp,
+                    chat_id=chat_id,
+                    backend_name=backend_name,
+                    channel="email_auto",
+                    tool_profile="reply_only",
                 )
                 reply_body = data.get("result", "").strip()
                 new_session_id = data.get("session_id", session_id)
@@ -556,7 +564,8 @@ class EmailInputChannel(Channel):
                 return
 
             # Persist session for sender continuity
-            upsert_session(chat_id, new_session_id, model, msg_count + 1)
+            upsert_kwargs = {"backend": backend_name} if backend_name is not None else {}
+            upsert_session(chat_id, new_session_id, model, msg_count + 1, **upsert_kwargs)
 
         # Send immediately — no approval gate
         try:
