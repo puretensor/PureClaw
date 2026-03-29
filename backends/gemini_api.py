@@ -460,6 +460,7 @@ class GeminiAPIBackend:
         timeout: int = 300,
         system_prompt: str | None = None,
         memory_context: str | None = None,
+        tool_context=None,
     ) -> dict:
         session_id = session_id or str(uuid.uuid4())
         model_id = self._resolve_model(model)
@@ -468,6 +469,7 @@ class GeminiAPIBackend:
             prompt, model_id=model_id, session_id=session_id,
             timeout=timeout, system_prompt=system_prompt,
             memory_context=memory_context,
+            tool_context=tool_context,
         )
 
     def _call_sync_inner(
@@ -479,6 +481,7 @@ class GeminiAPIBackend:
         timeout: int,
         system_prompt: str | None,
         memory_context: str | None,
+        tool_context=None,
     ) -> dict:
         from context_compression import compress_tool_results, compress_history
         history = _sanitize_history(get_conversation_history(session_id))
@@ -492,6 +495,12 @@ class GeminiAPIBackend:
         )
 
         def send_request(msgs):
+            try:
+                from security.redact import redact_history
+
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             return self._generate(model_id, msgs, **system_kw)
 
         if self._tools_enabled:
@@ -505,6 +514,7 @@ class GeminiAPIBackend:
                     tool_timeout=self._tool_timeout,
                     total_timeout=min(timeout, self._total_timeout),
                     cwd=self._cwd,
+                    tool_context=tool_context,
                 )
             except Exception as e:
                 log.error("Azure OpenAI tool loop error (sync): %s", e)
@@ -543,6 +553,7 @@ class GeminiAPIBackend:
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
+        tool_context=None,
     ) -> dict:
         session_id = session_id or str(uuid.uuid4())
         model_id = self._resolve_model(model)
@@ -560,11 +571,23 @@ class GeminiAPIBackend:
         )
 
         async def send_and_parse_stream(msgs, editor):
+            try:
+                from security.redact import redact_history
+
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             return await self._stream_request(
                 msgs, model_id, streaming_editor=editor, **system_kw,
             )
 
         async def send_request(msgs):
+            try:
+                from security.redact import redact_history
+
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             return await self._generate_async(model_id, msgs, **system_kw)
 
         if self._tools_enabled:
@@ -581,6 +604,7 @@ class GeminiAPIBackend:
                     streaming_editor=streaming_editor,
                     on_progress=on_progress,
                     send_and_parse_stream=send_and_parse_stream,
+                    tool_context=tool_context,
                 )
             except Exception as e:
                 log.error("Azure OpenAI tool loop error (async): %s", e)

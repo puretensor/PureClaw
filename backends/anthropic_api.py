@@ -364,6 +364,7 @@ class AnthropicAPIBackend:
         timeout: int = 300,
         system_prompt: str | None = None,
         memory_context: str | None = None,
+        tool_context=None,
     ) -> dict:
         client, err = self._require_client()
         if err:
@@ -403,6 +404,7 @@ class AnthropicAPIBackend:
                 tool_timeout=self._tool_timeout,
                 total_timeout=min(timeout, self._total_timeout),
                 cwd=self._cwd,
+                tool_context=tool_context,
             )
             result_text = result.get("result", "")
             if result_text:
@@ -440,6 +442,7 @@ class AnthropicAPIBackend:
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
+        tool_context=None,
     ) -> dict:
         aclient, err = self._require_aclient()
         if err:
@@ -453,6 +456,12 @@ class AnthropicAPIBackend:
         messages = history + [{"role": "user", "content": message}]
 
         async def send_request(msgs):
+            try:
+                from security.redact import redact_history
+
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             kwargs = dict(
                 model=model_id,
                 max_tokens=self._max_tokens,
@@ -476,6 +485,7 @@ class AnthropicAPIBackend:
                 cwd=self._cwd,
                 streaming_editor=streaming_editor,
                 on_progress=on_progress,
+                tool_context=tool_context,
             )
             result_text = result.get("result", "")
             if result_text:

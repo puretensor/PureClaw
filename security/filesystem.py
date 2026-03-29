@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 
 from security.policy import get_policy, matches_glob
 
@@ -71,6 +72,11 @@ _DANGEROUS_PATTERNS = [
     (re.compile(r"\b(curl|wget)\b.*\|\s*(ba)?sh"), "pipe-to-shell"),
 ]
 
+_NETWORK_PATTERNS = [
+    (re.compile(r"\b(curl|wget|lynx|httpie)\b"), "network egress"),
+    (re.compile(r"\b(nc|ncat|telnet|ssh|scp|rsync)\b"), "remote network access"),
+]
+
 
 def _extract_write_targets(command: str) -> list[str]:
     """Extract potential file write targets from a bash command."""
@@ -87,6 +93,36 @@ def _extract_write_targets(command: str) -> list[str]:
     return targets
 
 
+def _extract_read_targets(command: str) -> list[str]:
+    """Extract likely filesystem read targets from simple bash commands."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+
+    if not tokens:
+        return []
+
+    verb = tokens[0]
+    read_verbs = {"cat", "head", "tail", "less", "more", "nl", "wc"}
+    regex_verbs = {"grep", "rg", "sed", "awk"}
+
+    targets: list[str] = []
+    args = [t for t in tokens[1:] if not t.startswith("-")]
+
+    if verb in read_verbs:
+        targets.extend(a for a in args if a.startswith("/") or a.startswith("."))
+    elif verb in regex_verbs and args:
+        # Last positional arg is usually the path/search target.
+        target = args[-1]
+        if target.startswith("/") or target.startswith("."):
+            targets.append(target)
+    elif verb in {"cp", "mv"} and len(args) >= 2:
+        targets.extend(args[:-1])
+
+    return targets
+
+
 def check_bash_command(command: str) -> tuple[bool, str]:
     """Heuristic check on a bash command. Defense-in-depth only.
 
@@ -99,14 +135,20 @@ def check_bash_command(command: str) -> tuple[bool, str]:
         if pattern.search(command):
             return False, f"Bash command contains dangerous pattern: {desc}"
 
+    for pattern, desc in _NETWORK_PATTERNS:
+        if pattern.search(command):
+            return False, f"Bash command contains blocked pattern: {desc}"
+
     # Check write targets against policy
     for target in _extract_write_targets(command):
-        try:
-            real = os.path.realpath(target)
-        except (OSError, ValueError):
-            real = target
+        allowed, reason = check_path_access(target, "write")
+        if not allowed:
+            return False, f"Bash write target blocked: {reason}"
 
-        if matches_glob(real, policy.write_deny):
-            return False, f"Bash write target '{real}' matches write_deny policy"
+    # Heuristic read checks for obvious file reads.
+    for target in _extract_read_targets(command):
+        allowed, reason = check_path_access(target, "read")
+        if not allowed:
+            return False, f"Bash read target blocked: {reason}"
 
     return True, "allowed"

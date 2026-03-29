@@ -216,6 +216,7 @@ class VLLMBackend:
         timeout: int = 300,
         system_prompt: str | None = None,
         memory_context: str | None = None,
+        tool_context=None,
     ) -> dict:
         session_id = session_id or str(uuid.uuid4())
 
@@ -235,8 +236,7 @@ class VLLMBackend:
             api_msgs = ([{"role": "system", "content": system_str}] + msgs) if system_str else msgs
             extra = {"top_k": 20, "min_p": 0.05, "repetition_penalty": 1.05}
             # Sub-agents skip reasoning traces for faster responses
-            from backends.tools import _tool_context
-            if getattr(_tool_context, "is_subagent", False):
+            if getattr(tool_context, "is_subagent", False):
                 extra["chat_template_kwargs"] = {"enable_thinking": False}
             return self._client.chat.completions.create(
                 model=self._model,
@@ -259,6 +259,7 @@ class VLLMBackend:
                 tool_timeout=self._tool_timeout,
                 total_timeout=min(timeout, self._total_timeout),
                 cwd=self._cwd,
+                tool_context=tool_context,
             )
             if result.get("result"):
                 save_conversation_history(session_id, _clean_for_history(messages))
@@ -292,6 +293,7 @@ class VLLMBackend:
         system_prompt: str | None = None,
         memory_context: str | None = None,
         extra_system_prompt: str | None = None,
+        tool_context=None,
     ) -> dict:
         session_id = session_id or str(uuid.uuid4())
 
@@ -305,6 +307,12 @@ class VLLMBackend:
         messages = history + [{"role": "user", "content": nudged}]
 
         async def send_request(msgs):
+            try:
+                from security.redact import redact_history
+
+                msgs = redact_history(msgs)
+            except Exception:
+                pass
             api_msgs = ([{"role": "system", "content": system_str}] + msgs) if system_str else msgs
             return await self._aclient.chat.completions.create(
                 model=self._model,
@@ -329,6 +337,7 @@ class VLLMBackend:
                 cwd=self._cwd,
                 streaming_editor=streaming_editor,
                 on_progress=on_progress,
+                tool_context=tool_context,
             )
             if result.get("result"):
                 save_conversation_history(session_id, _clean_for_history(messages))

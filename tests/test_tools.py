@@ -443,3 +443,20 @@ class TestPlanMode:
             assert "blocked" not in result  # read should work
         finally:
             set_plan_mode(False)
+
+    def test_tool_profile_blocks_bash(self):
+        """Restricted profiles cannot use mutating tools."""
+        from backends.tools import ToolExecutionContext, execute_tool
+
+        result, _ = execute_tool(
+            "bash",
+            {"command": "echo nope"},
+            tool_context=ToolExecutionContext(policy_profile="reply_only"),
+        )
+        assert "blocked for policy profile" in result
+
+    def test_policy_errors_fail_closed(self):
+        """Security policy evaluation errors deny the tool call."""
+        with patch("backends.tools._check_security_policy", side_effect=RuntimeError("boom")):
+            result, _ = execute_tool("bash", {"command": "echo test"})
+        assert "policy evaluation failed" in result.lower()
