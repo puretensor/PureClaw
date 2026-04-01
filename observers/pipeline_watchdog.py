@@ -35,7 +35,7 @@ STARTUP_GRACE_SECS = 600  # 10 minutes
 _pod_start_time = time.monotonic()
 
 # Thresholds
-CC_STALE_MINUTES = 60          # Alert if no new CC report in this many minutes
+CC_STALE_MINUTES = 1440        # Alert if no new CC report in 24h (sessions are intermittent)
 VOICE_KB_STALE_HOURS = 24      # Alert if no new voice-kb output in this many hours
 DAILY_REPORT_MAX_AGE_HOURS = 36  # Alert if last daily report PDF older than this
 
