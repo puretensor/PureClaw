@@ -3,14 +3,16 @@
 
 Runs at 8 AM weekdays via the Observer registry:
   1. Fetches today's headlines from major news RSS feeds
-  2. Generates a structured intelligence brief with source citations
-  3. Validates source fidelity (brief vs. cited headlines)
-  4. Validates ON THIS DAY / QUOTE via Gemini Google Search grounding (kept on Gemini for grounding)
-  5. Runs AI council quality gate (4 models in parallel)
-  6. Sends as HTML email to configured recipients
+  2. Generates a structured intelligence brief (DeepSeek primary)
+  3. Narrow source fidelity check (titles, roles, claims vs. headlines)
+  4. Entity/role verification via Grok web search (Gemini grounding fallback)
+  5. Validates ON THIS DAY / QUOTE via Gemini Google Search grounding
+  6. Runs AI council quality gate (5 models in parallel)
+  7. HARD GATE: council must approve (>= 6.0) or pipeline aborts
+  8. Saves brief to disk, then sends as HTML email
 
-Architecture: Generate (with citations) -> Source validation -> Web-grounded verify -> Council gate -> Email
-Fallback: If council rejects, degrades to headline summary (no analysis).
+Architecture: Generate -> Source fidelity -> Entity verification -> Knowledge verify -> Council gate -> Email
+Abort: If council does not approve after revision, abort and alert via Telegram. Never send failing content.
 """
 
 import base64
@@ -39,6 +41,10 @@ class DailySnippetObserver(Observer):
 
     name = "daily_snippet"
     schedule = "0 8 * * 0-4"  # 8 AM weekdays (UTC, 0=Mon)
+
+    COUNCIL_ABORT_THRESHOLD = 6.0
+    SECTION_HEADERS = {"AMERICAS", "EUROPE", "MIDDLE EAST", "ASIA-PACIFIC", "GLOBAL"}
+    MIN_REVISION_LENGTH = 4000
 
     # -----------------------------------------------------------------------
     # Cloud LLM -- direct API calls, no engine/backend dependency
@@ -130,9 +136,9 @@ class DailySnippetObserver(Observer):
     def run(self, ctx: ObserverContext) -> ObserverResult:
         """Execute the daily snippet pipeline.
 
-        Pipeline: RSS -> Generate (with citations) -> Source validation ->
-                  Web-grounded verify -> Council gate -> Email
-        Fallback: headline summary if council rejects.
+        Pipeline: RSS -> Generate -> Source fidelity (narrow) -> Entity verification (web) ->
+                  Knowledge validation -> Council gate (hard) -> Save to disk -> Email
+        Abort: If council does not approve, save brief and alert Telegram.
         """
         date_str = ctx.now.strftime("%B %d, %Y")
         log.info("Daily Intelligence Snippet -- %s", date_str)
@@ -156,17 +162,25 @@ class DailySnippetObserver(Observer):
             self.send_telegram(f"[SNIPPET ERROR] {msg}")
             return ObserverResult(success=False, error=msg)
 
-        # 3. Source fidelity -- skip correction step (it strips analytical content
-        # which is expected in 3-sentence format). Council review handles QA.
-        log.info("Skipping source fidelity correction (council handles QA)")
+        # 3. Source fidelity -- narrow check for added titles/roles/claims
+        log.info("Running source fidelity check (titles/roles/claims only)...")
+        brief, source_fidelity_passed = self._validate_source_fidelity_narrow(brief, headlines_text)
 
-        # 4. Validate ON THIS DAY / QUOTE via web-grounded search
+        # 4. Entity/role verification via web search (Grok primary, Gemini fallback)
+        log.info("Verifying named entities against live web...")
+        brief, entities_verified = self._verify_entities_web(brief)
+
+        # 5. Validate ON THIS DAY / QUOTE via web-grounded search
         log.info("Validating knowledge sections (web-grounded)...")
         brief = self._validate_knowledge_sections(brief)
 
-        # 5. Council review (4 models in parallel)
+        # 6. Council review (5 models in parallel)
         log.info("Running AI council review...")
-        council = self._council_review(brief, headlines_text)
+        council = self._council_review(
+            brief, headlines_text,
+            entities_verified=entities_verified,
+            source_fidelity_passed=source_fidelity_passed,
+        )
         council_score = council.average_score
         council_responded = council.responded
         council_total = council.total
@@ -175,20 +189,41 @@ class DailySnippetObserver(Observer):
             log.info("Council requested revision (%.1f/10). Revising...", council_score)
             brief = self._revise_with_feedback(brief, headlines_text, council.feedback)
             # Re-evaluate after revision
-            council = self._council_review(brief, headlines_text)
+            council = self._council_review(
+                brief, headlines_text,
+                entities_verified=entities_verified,
+                source_fidelity_passed=source_fidelity_passed,
+            )
             council_score = council.average_score
             council_responded = council.responded
             log.info("Post-revision council score: %.1f/10 (%s)", council_score, council.verdict)
 
-        if council.verdict == "abort" or (council.verdict == "revise"):
-            log.warning("Council gave low score (%.1f/10) but sending brief anyway -- no degraded fallbacks.", council_score)
+        # HARD GATE: abort if council does not approve
+        if council.verdict != "proceed":
+            self._save_brief_to_disk(ctx, brief, date_str, council, "ABORTED")
+            alert = (
+                f"[SNIPPET ABORTED] Council rejected brief "
+                f"({council_score:.1f}/10, verdict: {council.verdict})\n\n"
+                f"{council.scores_table}\n\n"
+                f"Brief saved to disk for review."
+            )
+            log.error(alert)
+            self.send_telegram(alert)
+            return ObserverResult(
+                success=False,
+                error=f"Council gate: {council_score:.1f}/10 ({council.verdict})",
+                data={"council_score": council_score, "verdict": council.verdict},
+            )
 
         # Clean up SKIP_QUOTE and strip any remaining citation markers
         brief = brief.replace("SKIP_QUOTE", "").strip()
         brief = re.sub(r"\s*\[HL-[\d,\s]+\]", "", brief)
         brief = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", brief)
 
-        # 6. Format and send email
+        # Save brief to disk before sending
+        self._save_brief_to_disk(ctx, brief, date_str, council, "SENT")
+
+        # 7. Format and send email
         subject = f"Daily Intelligence Snippet -- {date_str}"
         html_content = self.brief_to_html(
             brief, date_str,
@@ -202,7 +237,7 @@ class DailySnippetObserver(Observer):
         if sent:
             snippet_to = os.environ.get("SNIPPET_TO", "(unknown)")
             log.info("Email sent to %s", snippet_to)
-            score_tag = f" | Council: {council_score:.1f}/10" if council_score > 0 else " | Headline summary (council rejected)"
+            score_tag = f" | Council: {council_score:.1f}/10"
             short = brief[:1800] + "..." if len(brief) > 1800 else brief
             self.send_telegram(f"[SNIPPET] Sent to recipients{score_tag}\n\n{short}")
             return ObserverResult(
@@ -394,6 +429,11 @@ CONTENT RULES:
 - Do NOT add items not in the headlines list.
 - Cover the full breadth of today's news across all five regions.
 
+ENTITY RULES:
+- When mentioning a political leader or titled person, use ONLY the title/role stated in the headlines.
+- If the headlines mention a person by name without a title, refer to them BY NAME ONLY. Do NOT add titles like "President", "Chancellor", "Prime Minister", "CEO", or "opposition leader" from your knowledge -- they may be outdated.
+- If context requires a title and the headlines do not provide one, write the person's name followed by "[title unconfirmed]" so it can be verified downstream.
+
 FACTUAL COMPLETENESS:
 - NEVER omit material facts to appear neutral or politically correct. Accuracy trumps sensitivity.
 - When describing people involved in events, use precise factual language. If a perpetrator, suspect, or key figure is transgender, state this plainly (e.g. "a biological male who identified as a woman" or "a trans woman"). Do not simply write "woman" or "man" if this obscures the biological sex, as this constitutes misinformation by omission.
@@ -489,6 +529,245 @@ Rules:
             log.warning("Source fidelity fix failed: %s -- keeping original", e)
 
         return brief
+
+    # -----------------------------------------------------------------------
+    # Narrow source fidelity (titles, roles, claims only)
+    # -----------------------------------------------------------------------
+
+    def _validate_source_fidelity_narrow(self, brief: str, headlines_text: str) -> tuple[str, bool]:
+        """Check for added titles, roles, and specific claims not in headlines.
+
+        Narrower than _validate_source_fidelity -- does NOT flag analytical
+        commentary or strategic implications, only factual additions about
+        people's titles/roles, specific statistics, and named organisations.
+
+        Returns (possibly_corrected_brief, passed: bool).
+        """
+        prompt = f"""You are a source-fidelity auditor specialising in entity verification.
+Compare this intelligence brief against the source headlines below.
+
+SOURCE HEADLINES:
+{headlines_text}
+
+BRIEF TO AUDIT:
+{brief}
+
+TASK -- flag ONLY these specific types of added claims:
+1. People's titles, roles, or positions NOT stated in any headline (e.g. calling someone "Chancellor" or "opposition leader" when headlines only use their name)
+2. Specific statistics, numbers, or monetary figures NOT present in any headline
+3. Named organisations NOT mentioned in any headline
+4. Causal claims ("X caused Y") NOT supported by any headline
+
+Do NOT flag:
+- Analytical commentary ("this signals...", "the implications are...")
+- Strategic implications or outlook statements
+- General geopolitical context ("amid rising tensions...")
+- ON THIS DAY or QUOTE sections (those are knowledge-based)
+
+Return a JSON object:
+{{"issues": [
+  {{"story": "brief headline", "claim": "the specific added claim", "fix": "corrected text using only headline facts"}}
+], "clean": true/false}}
+
+If no issues: {{"issues": [], "clean": true}}
+Return ONLY the JSON."""
+
+        try:
+            result = self._call_cloud_llm(prompt, timeout=60)
+        except Exception as e:
+            log.warning("Source fidelity (narrow): check failed: %s", e)
+            return brief, False
+
+        if not result:
+            log.warning("Source fidelity (narrow): empty response")
+            return brief, False
+
+        parsed = extract_json(result)
+        if not isinstance(parsed, dict):
+            log.warning("Source fidelity (narrow): could not parse JSON")
+            return brief, False
+
+        issues = parsed.get("issues", [])
+        if not issues:
+            log.info("Source fidelity (narrow): PASSED")
+            return brief, True
+
+        log.info("Source fidelity (narrow): %d issues found, correcting...", len(issues))
+        for issue in issues:
+            log.info("  [CLAIM] %s", issue.get("claim", "")[:120])
+
+        # Apply corrections via targeted string replacement
+        corrected = brief
+        for issue in issues:
+            claim = issue.get("claim", "")
+            fix = issue.get("fix", "")
+            if claim and fix and claim in corrected:
+                corrected = corrected.replace(claim, fix, 1)
+                log.info("  [FIXED] '%s' -> '%s'", claim[:60], fix[:60])
+
+        if corrected != brief:
+            log.info("Source fidelity (narrow): %d corrections applied", len(issues))
+            return corrected, True
+
+        return brief, False
+
+    # -----------------------------------------------------------------------
+    # Entity/role verification via web search
+    # -----------------------------------------------------------------------
+
+    def _verify_entities_web(self, brief: str) -> tuple[str, bool]:
+        """Verify named entities' titles/roles via live web search.
+
+        Step 1: Extract {name, claimed_role} pairs from the brief.
+        Step 2: Verify via Grok (live web search) with Gemini grounding fallback.
+        Returns (possibly_corrected_brief, verified: bool).
+        """
+        from observers.cloud_llm import call_xai_grok
+
+        # Step 1: Extract entities with titles/roles
+        extract_prompt = f"""Extract all named people who are given a title or role in this text.
+Return a JSON array of objects with "name" and "claimed_role" fields.
+Only include people who are explicitly given a title (president, chancellor, CEO, minister, leader, etc).
+Do not include historical figures from ON THIS DAY or QUOTE sections.
+
+TEXT:
+{brief[:8000]}
+
+Return ONLY the JSON array, e.g.: [{{"name": "John Smith", "claimed_role": "Prime Minister"}}]
+If no titled people found, return: []"""
+
+        try:
+            extract_result = self._call_cloud_llm(extract_prompt, timeout=30)
+        except Exception as e:
+            log.warning("Entity extraction failed: %s", e)
+            return brief, False
+
+        if not extract_result:
+            log.warning("Entity extraction: empty response")
+            return brief, False
+
+        entities = extract_json(extract_result)
+        if not isinstance(entities, list) or not entities:
+            log.info("Entity verification: no titled entities found or parse failed")
+            return brief, True  # No entities to verify = pass
+
+        log.info("Entity verification: %d titled entities to verify", len(entities))
+        entity_list = json.dumps(entities, indent=2)
+
+        # Step 2: Verify via Grok (has live web search built in)
+        verify_prompt = (
+            "Verify each person's current title/role using web search. "
+            "For each person, confirm if the claimed_role is CURRENTLY correct.\n\n"
+            f"ENTITIES TO VERIFY:\n{entity_list}\n\n"
+            "Return a JSON array with the SAME entries plus a 'correct' boolean "
+            "and 'actual_role' field (the verified current role).\n"
+            'Example: [{"name": "X", "claimed_role": "Y", "correct": false, "actual_role": "Z"}]\n'
+            "Return ONLY the JSON array."
+        )
+
+        verified = None
+        # Primary: Grok with live web search
+        try:
+            grok_result = call_xai_grok(
+                "You are a fact-checker. Verify the current titles and roles of named people using web search.",
+                verify_prompt,
+                timeout=45,
+            )
+            verified = extract_json(grok_result)
+            if isinstance(verified, list):
+                log.info("Entity verification: Grok responded (%d entities)", len(verified))
+        except Exception as e:
+            log.warning("Entity verification: Grok failed: %s", e)
+
+        # Fallback: Gemini with Google Search grounding
+        if not isinstance(verified, list):
+            try:
+                verified = self._verify_entities_gemini(entity_list)
+                if isinstance(verified, list):
+                    log.info("Entity verification: Gemini fallback responded (%d entities)", len(verified))
+            except Exception as e:
+                log.warning("Entity verification: Gemini fallback also failed: %s", e)
+
+        if not isinstance(verified, list):
+            log.warning("Entity verification: FAILED -- both Grok and Gemini unavailable")
+            return brief, False
+
+        # Apply corrections
+        corrections = [e for e in verified if isinstance(e, dict) and e.get("correct") is False]
+        if not corrections:
+            log.info("Entity verification: PASSED -- all titles/roles confirmed")
+            return brief, True
+
+        corrected = brief
+        for c in corrections:
+            old_role = c.get("claimed_role", "")
+            new_role = c.get("actual_role", "")
+            name = c.get("name", "")
+            if old_role and new_role and old_role in corrected:
+                corrected = corrected.replace(old_role, new_role, 1)
+                log.info("  [ENTITY CORRECTED] %s: '%s' -> '%s'", name, old_role, new_role)
+
+        return corrected, True
+
+    def _verify_entities_gemini(self, entity_list: str) -> list | None:
+        """Verify entities via Gemini with Google Search grounding (fallback)."""
+        gemini_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+        if not gemini_key:
+            return None
+
+        from google import genai
+        from google.genai import types as gtypes
+
+        client = genai.Client(api_key=gemini_key)
+        google_search_tool = gtypes.Tool(google_search=gtypes.GoogleSearch())
+
+        prompt = (
+            "Verify each person's current title/role using web search.\n\n"
+            f"ENTITIES TO VERIFY:\n{entity_list}\n\n"
+            "Return a JSON array with 'name', 'claimed_role', 'correct' (bool), "
+            "and 'actual_role' (verified current role).\n"
+            "Return ONLY the JSON array."
+        )
+
+        config = gtypes.GenerateContentConfig(
+            tools=[google_search_tool],
+            temperature=0.1,
+            max_output_tokens=2048,
+        )
+
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+            config=config,
+        )
+
+        text = response.text or ""
+        return extract_json(text) if text.strip() else None
+
+    # -----------------------------------------------------------------------
+    # Save brief to disk for post-mortem
+    # -----------------------------------------------------------------------
+
+    def _save_brief_to_disk(self, ctx: ObserverContext, brief: str, date_str: str,
+                            council: CouncilResult, status: str) -> None:
+        """Persist brief + council metadata to state dir for post-mortem analysis."""
+        try:
+            date_slug = date_str.replace(" ", "_").replace(",", "")
+            filepath = ctx.state_dir / f"snippet_{date_slug}.json"
+            payload = {
+                "date": date_str,
+                "status": status,
+                "council_score": council.average_score,
+                "council_verdict": council.verdict,
+                "council_responded": council.responded,
+                "council_scores_table": council.scores_table,
+                "brief_length": len(brief),
+                "brief": brief,
+            }
+            filepath.write_text(json.dumps(payload, indent=2))
+            log.info("Brief saved to %s (%s)", filepath, status)
+        except Exception as e:
+            log.warning("Failed to save brief to disk: %s", e)
 
     # -----------------------------------------------------------------------
     # Prong B: Knowledge section validation (web-grounded)
@@ -618,13 +897,32 @@ Return ONLY the JSON."""
     # AI Council quality gate
     # -----------------------------------------------------------------------
 
-    def _council_review(self, brief: str, headlines_text: str) -> CouncilResult:
-        """Run 4-model AI council to evaluate the brief.
+    def _council_review(self, brief: str, headlines_text: str, *,
+                        entities_verified: bool = True,
+                        source_fidelity_passed: bool = True) -> CouncilResult:
+        """Run 5-model AI council to evaluate the brief.
 
         Each council member receives the RSS headlines as context so they verify
         the brief against its actual sources -- not their training knowledge.
+        Verification flags inform council members when upstream checks failed.
         """
+        verification_lines = []
+        if entities_verified:
+            verification_lines.append("Entity/role verification: PASSED (web-grounded)")
+        else:
+            verification_lines.append(
+                "Entity/role verification: FAILED -- pay extra attention to people's titles and roles"
+            )
+        if source_fidelity_passed:
+            verification_lines.append("Source fidelity: PASSED")
+        else:
+            verification_lines.append(
+                "Source fidelity: UNVERIFIED -- check for fabricated details not present in headlines"
+            )
+        status_block = "\n".join(verification_lines)
+
         context_block = (
+            f"UPSTREAM VERIFICATION STATUS:\n{status_block}\n\n"
             f"SOURCE HEADLINES (verify the brief against these, not your training knowledge):\n"
             f"{headlines_text[:6000]}\n\n"
             f"BRIEF TO EVALUATE:\n{brief}"
@@ -696,7 +994,11 @@ Return ONLY the JSON."""
                     "Check: Are named entities and their roles/titles correct? "
                     "Are dates, timelines, and statistics accurate? "
                     "Are causal claims and geopolitical relationships correctly stated? "
-                    "Flag anything that seems fabricated, outdated, or factually dubious."
+                    "Flag anything that seems fabricated, outdated, or factually dubious. "
+                    "IMPORTANT: Check the UPSTREAM VERIFICATION STATUS at the top. "
+                    "If entity/role verification FAILED, you MUST independently verify "
+                    "all named persons' titles and roles. Score harshly (4 or below) "
+                    "if you cannot confirm them."
                 ),
             },
         }
@@ -749,10 +1051,17 @@ Rules:
 
         try:
             revised = self._call_cloud_llm(prompt, timeout=90)
-            if revised and len(revised) > len(brief) * 0.5:
-                log.info("Revision applied (%d chars)", len(revised))
-                return revised
-            log.warning("Revision response too short, keeping original")
+            if revised:
+                rev_sections = sum(1 for h in self.SECTION_HEADERS if h in revised)
+                orig_sections = sum(1 for h in self.SECTION_HEADERS if h in brief)
+                if len(revised) >= self.MIN_REVISION_LENGTH and rev_sections >= min(orig_sections, 4):
+                    log.info("Revision applied (%d chars, %d/%d sections)",
+                             len(revised), rev_sections, orig_sections)
+                    return revised
+                log.warning("Revision rejected: %d chars (min %d), %d/%d sections",
+                            len(revised), self.MIN_REVISION_LENGTH, rev_sections, orig_sections)
+            else:
+                log.warning("Revision returned empty response, keeping original")
         except Exception as e:
             log.warning("Revision failed: %s -- keeping original", e)
 
