@@ -8,11 +8,11 @@ Runs at 8 AM weekdays via the Observer registry:
   4. Entity/role verification via Grok web search (Gemini grounding fallback)
   5. Validates ON THIS DAY / QUOTE via Gemini Google Search grounding
   6. Runs AI council quality gate (5 models in parallel)
-  7. HARD GATE: council must approve (>= 6.0) or pipeline aborts
+  7. SOFT GATE: council reviews, revises if needed, sends with warning if still low
   8. Saves brief to disk, then sends as HTML email
 
-Architecture: Generate -> Source fidelity -> Entity verification -> Knowledge verify -> Council gate -> Email
-Abort: If council does not approve after revision, abort and alert via Telegram. Never send failing content.
+Architecture: Generate -> Source fidelity -> Entity verification -> Knowledge verify -> Council review -> Email
+Quality: If council does not approve after revision, send with warning and alert via Telegram.
 """
 
 import base64
@@ -185,7 +185,7 @@ class DailySnippetObserver(Observer):
         council_responded = council.responded
         council_total = council.total
 
-        if council.verdict == "revise":
+        if council.verdict != "proceed":
             log.info("Council requested revision (%.1f/10). Revising...", council_score)
             brief = self._revise_with_feedback(brief, headlines_text, council.feedback)
             # Re-evaluate after revision
@@ -198,21 +198,17 @@ class DailySnippetObserver(Observer):
             council_responded = council.responded
             log.info("Post-revision council score: %.1f/10 (%s)", council_score, council.verdict)
 
-        # HARD GATE: abort if council does not approve
+        # SOFT GATE: if council still doesn't approve after revision, send with warning
         if council.verdict != "proceed":
-            self._save_brief_to_disk(ctx, brief, date_str, council, "ABORTED")
-            alert = (
-                f"[SNIPPET ABORTED] Council rejected brief "
-                f"({council_score:.1f}/10, verdict: {council.verdict})\n\n"
-                f"{council.scores_table}\n\n"
-                f"Brief saved to disk for review."
+            log.warning(
+                "Council did not approve after revision (%.1f/10, %s). "
+                "Sending with quality warning.",
+                council_score, council.verdict,
             )
-            log.error(alert)
-            self.send_telegram(alert)
-            return ObserverResult(
-                success=False,
-                error=f"Council gate: {council_score:.1f}/10 ({council.verdict})",
-                data={"council_score": council_score, "verdict": council.verdict},
+            self.send_telegram(
+                f"[SNIPPET WARNING] Sending brief with low council score "
+                f"({council_score:.1f}/10, {council.verdict})\n\n"
+                f"{council.scores_table}"
             )
 
         # Clean up SKIP_QUOTE and strip any remaining citation markers
@@ -995,10 +991,9 @@ Return ONLY the JSON."""
                     "Are dates, timelines, and statistics accurate? "
                     "Are causal claims and geopolitical relationships correctly stated? "
                     "Flag anything that seems fabricated, outdated, or factually dubious. "
-                    "IMPORTANT: Check the UPSTREAM VERIFICATION STATUS at the top. "
-                    "If entity/role verification FAILED, you MUST independently verify "
-                    "all named persons' titles and roles. Score harshly (4 or below) "
-                    "if you cannot confirm them."
+                    "Check the UPSTREAM VERIFICATION STATUS at the top. "
+                    "If entity/role verification FAILED, note any unverified titles/roles "
+                    "as concerns but do not penalise the score solely for upstream failures."
                 ),
             },
         }

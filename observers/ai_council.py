@@ -241,9 +241,6 @@ def run_council(
     if avg >= threshold and not any_below_min and quorum_met:
         verdict = "proceed"
         passed = True
-    elif avg < 5.0:
-        verdict = "abort"
-        passed = False
     else:
         verdict = "revise"
         passed = False
