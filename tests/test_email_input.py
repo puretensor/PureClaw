@@ -163,6 +163,7 @@ class TestEmailInputChannel:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
+        channel._notify_bot = bot
         monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc, role="monitor": [fake_email])
 
         await channel._poll_once()
@@ -278,6 +279,7 @@ class TestEmailInputChannel:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
+        channel._notify_bot = bot
         monkeypatch.setattr("channels.email_in.fetch_new_emails", lambda acc, role="monitor": [fake_email])
 
         mock_run = MagicMock()
@@ -313,6 +315,7 @@ class TestNotification:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
+        channel._notify_bot = bot
 
         em = {
             "id": "fmt-test@test.com",
@@ -338,6 +341,7 @@ class TestNotification:
         bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=bot)
+        channel._notify_bot = bot
 
         em = {
             "id": "fu-test@test.com",

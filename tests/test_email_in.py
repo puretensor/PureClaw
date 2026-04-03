@@ -163,6 +163,7 @@ class TestPollOnceClassification:
         mock_bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=mock_bot)
+        channel._notify_bot = mock_bot
 
         fake_email = {
             "id": "msg-notify-1",
@@ -193,6 +194,7 @@ class TestPollOnceClassification:
         mock_bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=mock_bot)
+        channel._notify_bot = mock_bot
 
         fake_email = {
             "id": "msg-auto-1",
@@ -235,6 +237,7 @@ class TestPollOnceClassification:
         mock_bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=mock_bot)
+        channel._notify_bot = mock_bot
 
         fake_email = {
             "id": "msg-auto-fail",
@@ -380,6 +383,7 @@ class TestNotificationFormatting:
         mock_bot.send_message = AsyncMock()
 
         channel = EmailInputChannel(bot=mock_bot)
+        channel._notify_bot = mock_bot
 
         fake_email = {
             "id": "msg-fmt-1",

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 with patch.dict("os.environ", {
     "TELEGRAM_BOT_TOKEN": "fake:token",
+    "ALERT_BOT_TOKEN": "fake:token",
     "AUTHORIZED_USER_ID": "12345",
 }):
     from observers.base import Observer, ObserverContext, ObserverResult
