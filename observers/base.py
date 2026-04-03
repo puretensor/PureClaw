@@ -60,8 +60,8 @@ class Observer(ABC):
     # -- Shared helpers (replaces duplicated code in standalone scripts) --
 
     def send_telegram(self, text: str, token: str = "", chat_id: str = "") -> None:
-        """Send a message to Telegram. Uses bot token from config by default."""
-        token = token or BOT_TOKEN
+        """Send a message to Telegram. Defaults to ALERT_BOT_TOKEN (ops channel)."""
+        token = token or ALERT_BOT_TOKEN
         chat_id = chat_id or str(AUTHORIZED_USER_ID)
 
         chunks = []
@@ -87,7 +87,7 @@ class Observer(ABC):
 
     def send_telegram_html(self, text: str, token: str = "", chat_id: str = "") -> None:
         """Send HTML-formatted message to Telegram."""
-        token = token or BOT_TOKEN
+        token = token or ALERT_BOT_TOKEN
         chat_id = chat_id or str(AUTHORIZED_USER_ID)
 
         data = urllib.parse.urlencode({

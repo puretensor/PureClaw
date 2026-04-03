@@ -329,7 +329,8 @@ class EmailInputChannel(Channel):
     """Polls IMAP for new emails, classifies them, and creates drafts or notifications."""
 
     def __init__(self, bot=None):
-        self._bot = bot
+        self._bot = bot           # conversational bot (draft approve/reject)
+        self._notify_bot = None   # alert bot (email notifications)
         self._task = None
 
     async def start(self):
@@ -459,8 +460,8 @@ class EmailInputChannel(Channel):
 
     async def _send_notification(self, em: dict, tag: str = "EMAIL",
                                  followup: bool = False):
-        """Send a Telegram notification about an email."""
-        if not self._bot:
+        """Send a Telegram notification about an email (via alert bot)."""
+        if not self._notify_bot:
             return
 
         # Backward compat: followup param overrides tag
@@ -477,7 +478,7 @@ class EmailInputChannel(Channel):
             text += f"\n{preview}..."
 
         try:
-            await self._bot.send_message(
+            await self._notify_bot.send_message(
                 chat_id=int(AUTHORIZED_USER_ID),
                 text=text,
             )
@@ -486,7 +487,7 @@ class EmailInputChannel(Channel):
 
     async def _send_reply_notification(self, em: dict, reply_body: str):
         """Send a [SENT] Telegram notification after auto-reply."""
-        if not self._bot:
+        if not self._notify_bot:
             return
         preview = reply_body[:300] + "..." if len(reply_body) > 300 else reply_body
         text = (
@@ -495,7 +496,7 @@ class EmailInputChannel(Channel):
             f"{preview}"
         )
         try:
-            await self._bot.send_message(
+            await self._notify_bot.send_message(
                 chat_id=int(AUTHORIZED_USER_ID), text=text,
             )
         except Exception:

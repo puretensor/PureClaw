@@ -76,7 +76,8 @@ class HalMailRunner:
     ):
         self._profiles = profiles
         self._backends = backends
-        self._bot = bot
+        self._bot = bot           # conversational bot
+        self._notify_bot = None   # alert bot (set externally)
         self._health = health
         self._profiles_path = Path(PROFILES_PATH)
         self._profiles_mtime: float = 0
@@ -511,8 +512,9 @@ class HalMailRunner:
     # ------------------------------------------------------------------
 
     async def _send_notification(self, em: dict, tag: str = "EMAIL"):
-        """Send a Telegram notification about an email."""
-        if not self._bot or DRY_RUN:
+        """Send a Telegram notification about an email (via alert bot)."""
+        bot = self._notify_bot or self._bot
+        if not bot or DRY_RUN:
             return
 
         text = (
@@ -525,7 +527,7 @@ class HalMailRunner:
             text += f"\n{preview}..."
 
         try:
-            await self._bot.send_message(
+            await bot.send_message(
                 chat_id=int(AUTHORIZED_USER_ID),
                 text=text,
             )
@@ -535,8 +537,9 @@ class HalMailRunner:
     async def _send_reply_notification(
         self, em: dict, reply_body: str, profile: dict
     ):
-        """Send a [SENT] Telegram notification after auto-reply."""
-        if not self._bot:
+        """Send a [SENT] Telegram notification after auto-reply (via alert bot)."""
+        bot = self._notify_bot or self._bot
+        if not bot:
             return
         backend_name = profile.get("backend", "?")
         preview = (
@@ -548,7 +551,7 @@ class HalMailRunner:
             f"{preview}"
         )
         try:
-            await self._bot.send_message(
+            await bot.send_message(
                 chat_id=int(AUTHORIZED_USER_ID),
                 text=text,
             )

@@ -163,9 +163,15 @@ async def main():
         # Start Telegram channel
         await telegram.start()
 
-        # Start email input channel (needs bot reference for notifications)
+        # Start email input channel (needs bot references for notifications)
         if email_in:
             email_in._bot = telegram.app.bot
+            # Use alert bot for email notifications (keep conversational bot clean)
+            from telegram.ext import ApplicationBuilder
+            from config import ALERT_BOT_TOKEN
+            _alert_app = ApplicationBuilder().token(ALERT_BOT_TOKEN).build()
+            await _alert_app.initialize()
+            email_in._notify_bot = _alert_app.bot
             await email_in.start()
 
         # Start Discord channel (if configured)
