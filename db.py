@@ -280,6 +280,25 @@ def init_db():
         con.execute("CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id)")
         log.info("Created audit_log table")
 
+    # Pending actions table (Rule of Two — operator approval gates)
+    pa_cols = [row[1] for row in con.execute("PRAGMA table_info(pending_actions)").fetchall()]
+    if not pa_cols:
+        con.execute("""CREATE TABLE pending_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            channel TEXT,
+            tool_name TEXT NOT NULL,
+            tool_args_json TEXT,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT NOT NULL,
+            resolved_at TEXT,
+            resolved_by TEXT,
+            operator_note TEXT
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_pa_status ON pending_actions(status)")
+        log.info("Created pending_actions table")
+
     # User profiles table (onboarding, timezone, preferences)
     profile_cols = [row[1] for row in con.execute("PRAGMA table_info(user_profiles)").fetchall()]
     if not profile_cols:

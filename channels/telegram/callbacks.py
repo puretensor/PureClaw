@@ -252,6 +252,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+    if data.startswith("r2:"):
+        parts = data.split(":", 2)
+        action = parts[1] if len(parts) > 1 else ""
+        action_id_str = parts[2] if len(parts) > 2 else ""
+
+        if action in ("approve", "reject") and action_id_str.isdigit():
+            from security.rule_of_two import resolve_approval
+            action_id = int(action_id_str)
+            decision = "approved" if action == "approve" else "rejected"
+            resolve_approval(action_id, decision)
+
+            icon = "\u2705" if action == "approve" else "\u274c"
+            label = "Approved" if action == "approve" else "Rejected"
+            await query.message.edit_text(
+                query.message.text + f"\n\n{icon} {label}"
+            )
+            log.info("Rule of Two action %d %s by operator", action_id, decision)
+        return
+
     if data.startswith("wa:"):
         parts = data.split(":", 3)
         action = parts[1] if len(parts) > 1 else ""

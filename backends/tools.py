@@ -503,12 +503,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_memory",
-            "description": "Read from persistent memory. With no args returns MEMORY.md. With topic returns that topic file. With query searches across all memory files.",
+            "description": "Read from persistent memory. With no args returns MEMORY.md. With topic returns that topic file. With query searches across all memory files. Set semantic=true with a query for hybrid vector+BM25 search via pgvector.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "topic": {"type": "string", "description": "Topic file to read (e.g. 'infrastructure')"},
                     "query": {"type": "string", "description": "Search query — searches across MEMORY.md and all topic files"},
+                    "semantic": {"type": "boolean", "description": "Use hybrid vector+BM25 search via pgvector (requires query)"},
                 },
             },
         },
@@ -521,6 +522,31 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory_rag",
+            "description": "Semantic search across agent memories using hybrid BM25 + vector retrieval (pgvector). Returns the most relevant stored facts ranked by Reciprocal Rank Fusion.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language search query",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Filter by category: infrastructure, preference, decision, lesson, project, general",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of results (default 5, max 20)",
+                    },
+                },
+                "required": ["query"],
             },
         },
     },
@@ -1196,8 +1222,18 @@ def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
     # Use cached memory — avoids a DB round-trip on every parallel spawn
     memory_ctx = _get_subagent_memory()
 
-    # Mark thread as subagent context
+    # Mark thread as subagent context with read_only enforcement
     _tool_context.is_subagent = True
+    parent_session = getattr(_tool_context, "session_id", None)
+    parent_channel = getattr(_tool_context, "channel", None)
+
+    # Subagent execution context — read_only profile enforced
+    sub_ctx = ToolExecutionContext(
+        is_subagent=True,
+        policy_profile="read_only",
+        session_id=f"sub:{parent_session}" if parent_session else None,
+        channel=parent_channel,
+    )
 
     try:
         if SUBAGENT_BACKEND == "bedrock_api":
@@ -1226,7 +1262,7 @@ def _run_subagent(task: str, tool_names: list[str], model: str | None) -> str:
             system_prompt=system_prompt,
             memory_context=memory_ctx,
             timeout=_SUBAGENT_TIMEOUT,
-            tool_context=ToolExecutionContext(is_subagent=True),
+            tool_context=sub_ctx,
         )
         return result.get("result", "(no result)")
     finally:
@@ -1307,8 +1343,28 @@ def _exec_save_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
 def _exec_read_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
     """Read from persistent memory."""
     from memory import get_memories_for_injection, read_topic_file, search_memories
+    from memory import get_soul, get_user_profile_md
     topic = args.get("topic")
     query = args.get("query")
+    semantic = args.get("semantic", False)
+
+    if query and semantic:
+        # Hybrid vector+BM25 search via pgvector
+        try:
+            import asyncio
+            from memory_rag import search_facts, MEMORY_RAG_ENABLED
+            if not MEMORY_RAG_ENABLED:
+                return "Memory RAG not enabled — falling back to text search", []
+            results = asyncio.run(search_facts(query, limit=5))
+            if not results:
+                return f"No semantic results for '{query}'", []
+            lines = [f"Semantic search for '{query}' ({len(results)} matches):"]
+            for r in results:
+                lines.append(f"  [{r['category']}] {r['content']}")
+            return "\n".join(lines), []
+        except Exception as e:
+            # Fall back to text search on error
+            pass
 
     if query:
         results = search_memories(query)
@@ -1320,6 +1376,13 @@ def _exec_read_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
         return "\n".join(lines), []
 
     if topic:
+        # Special identity files
+        if topic.lower() == "soul":
+            content = get_soul()
+            return content or "No SOUL.md found.", []
+        if topic.lower() == "user":
+            content = get_user_profile_md()
+            return content or "No USER.md found.", []
         content = read_topic_file(topic)
         if not content:
             return f"Topic file '{topic}' not found or empty", []
@@ -1343,6 +1406,35 @@ def _exec_list_memory(args: dict, **_kwargs) -> tuple[str, list[str]]:
     else:
         lines.append("No topic files.")
     return "\n".join(lines), []
+
+
+def _exec_search_memory_rag(args: dict, **_kwargs) -> tuple[str, list[str]]:
+    """Semantic search across agent memories via pgvector hybrid RAG."""
+    import asyncio
+    query = args.get("query", "").strip()
+    if not query:
+        return "Error: query is required", []
+
+    category = args.get("category")
+    limit = min(args.get("limit", 5), 20)
+
+    try:
+        from memory_rag import search_facts, MEMORY_RAG_ENABLED
+        if not MEMORY_RAG_ENABLED:
+            return "Memory RAG is not enabled (set MEMORY_RAG_ENABLED=true)", []
+
+        results = asyncio.run(search_facts(query, limit=limit, category=category))
+        if not results:
+            return f"No RAG results for '{query}'", []
+
+        lines = [f"Semantic search results for '{query}' ({len(results)} matches):"]
+        for r in results:
+            sources = "+".join(r["sources"])
+            lines.append(f"  [{r['category']}] ({sources}, score={r['rrf_score']}) {r['content']}")
+        return "\n".join(lines), []
+
+    except Exception as exc:
+        return f"RAG search failed: {exc}", []
 
 
 # ---------------------------------------------------------------------------
@@ -1370,6 +1462,7 @@ _EXECUTORS = {
     "save_memory": _exec_save_memory,
     "read_memory": _exec_read_memory,
     "list_memory": _exec_list_memory,
+    "search_memory_rag": _exec_search_memory_rag,
 }
 
 
@@ -1452,6 +1545,29 @@ def execute_tool(
         _audit_tool(ctx.session_id, ctx.channel, name, args, deny_reason, duration, "deny", "policy_error")
         return f"Error: {deny_reason}", []
 
+    # --- Rule of Two: operator approval gate for high-risk actions ---
+    if not ctx.is_subagent:
+        try:
+            from security.rule_of_two import (
+                requires_approval, create_pending_action,
+                wait_for_approval, send_approval_request_sync, _describe_action,
+            )
+            if requires_approval(name, args):
+                action_id = create_pending_action(ctx.session_id, ctx.channel, name, args)
+                desc = _describe_action(name, args)
+                log.info("[rule_of_two] Approval required for %s (action_id=%d)", name, action_id)
+                send_approval_request_sync(action_id, desc)
+
+                decision = wait_for_approval(action_id)
+                duration = int((time.monotonic() - t0) * 1000)
+                if decision != "approved":
+                    reason = f"r2_{decision}"
+                    _audit_tool(ctx.session_id, ctx.channel, name, args, f"Action {decision} by operator", duration, "deny", reason)
+                    return f"Action {decision} by operator (Rule of Two). Action ID: {action_id}", []
+                log.info("[rule_of_two] Action %d approved, proceeding", action_id)
+        except ImportError:
+            pass  # rule_of_two not available — skip
+
     executor = _EXECUTORS.get(name)
     if executor is None:
         return f"Error: unknown tool '{name}'", []
@@ -1468,11 +1584,21 @@ def execute_tool(
 
         duration = int((time.monotonic() - t0) * 1000)
         _audit_tool(ctx.session_id, ctx.channel, name, args, result_str, duration, "allow", None)
+        try:
+            from metrics import inc
+            inc("nexus_tool_executions_total", {"tool_name": name, "decision": "allow"})
+        except Exception:
+            pass
         return result_str, written
     except Exception as e:
         log.error("Tool %s execution error: %s", name, e)
         duration = int((time.monotonic() - t0) * 1000)
         _audit_tool(ctx.session_id, ctx.channel, name, args, str(e), duration, "error", None)
+        try:
+            from metrics import inc
+            inc("nexus_tool_executions_total", {"tool_name": name, "decision": "error"})
+        except Exception:
+            pass
         return f"Error executing {name}: {e}", []
 
 

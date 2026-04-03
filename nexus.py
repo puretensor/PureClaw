@@ -50,7 +50,8 @@ def _build_observer_registry():
         # ("observers.intel_briefing", "IntelBriefingObserver"),
         # intel_deep_analysis extracted to standalone K8s CronJob on arx4
         # ("observers.intel_deep_analysis", "IntelDeepAnalysisObserver"),
-        ("observers.memory_sync", "MemorySyncObserver"),
+        # memory_sync disabled — noise, no actionable output
+        # ("observers.memory_sync", "MemorySyncObserver"),
         # daily_report extracted to standalone K8s CronJob on fox-n1
         # ("observers.daily_report", "DailyReportObserver"),
         # doc_compiler extracted to standalone K8s CronJob on fox-n1
@@ -64,7 +65,10 @@ def _build_observer_registry():
         # github_activity extracted to standalone K8s CronJob on arx3
         # ("observers.github_activity", "GitHubActivityObserver"),
         ("observers.pipeline_watchdog", "PipelineWatchdog"),
-        ("observers.heartbeat", "HeartbeatObserver"),
+        # heartbeat v1 replaced by two-tier pipeline (v2)
+        ("observers.heartbeat", "HeartbeatBusinessObserver"),
+        ("observers.heartbeat", "HeartbeatOvernightObserver"),
+        ("observers.nightly_consolidation", "NightlyConsolidationObserver"),
         ("observers.mesh_health", "MeshHealthObserver"),
     ]
 

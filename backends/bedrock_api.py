@@ -173,6 +173,16 @@ def _log_bedrock_usage(usage: dict, model_id: str, label: str = "") -> None:
         prefix, input_tokens, cache_read, cache_write, output_tokens, total_cost,
     )
 
+    # Prometheus metrics
+    try:
+        from metrics import inc, observe
+        inc("nexus_llm_calls_total", {"backend": "bedrock", "model": model_id})
+        inc("nexus_llm_tokens_total", {"backend": "bedrock", "model": model_id, "direction": "input"}, input_tokens)
+        inc("nexus_llm_tokens_total", {"backend": "bedrock", "model": model_id, "direction": "output"}, output_tokens)
+        inc("nexus_llm_cost_usd_total", {"backend": "bedrock", "model": model_id}, total_cost)
+    except Exception:
+        pass
+
 
 class BedrockAPIBackend:
     """Backend that calls Claude via AWS Bedrock Converse API with tool loop."""

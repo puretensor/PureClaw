@@ -4,6 +4,8 @@ Engine-agnostic: all backends (claude_code, bedrock, codex, gemini, vllm, ollama
 get identical context via get_memories_for_injection().
 
 Canonical store: /data/memory/ (PVC-backed)
+  SOUL.md     — agent identity, values, behavioral anchors (persistent)
+  USER.md     — operator profile, preferences, working style
   CONTEXT.md  — fleet topology, services, credentials, preferences
   LESSONS.md  — accumulated lessons learned (append-only)
   MEMORY.md   — runtime memories from save_memory() tool
@@ -39,12 +41,14 @@ MEMORY_DIR = Path(os.environ.get("MEMORY_DIR", "/data/memory"))
 MEMORY_MD = MEMORY_DIR / "MEMORY.md"
 CONTEXT_MD = MEMORY_DIR / "CONTEXT.md"
 LESSONS_MD = MEMORY_DIR / "LESSONS.md"
+SOUL_MD = MEMORY_DIR / "SOUL.md"
+USER_MD = MEMORY_DIR / "USER.md"
 SHARED_CONTEXT_PATH = Path(os.environ.get(
     "SHARED_CONTEXT_PATH", "/data/sync/pureclaw_memory.md"
 ))
 
 # System files — not user topic files, excluded from list_topic_files()
-_SYSTEM_FILES = {"MEMORY.md", "CONTEXT.md", "LESSONS.md", "HEARTBEAT.md"}
+_SYSTEM_FILES = {"MEMORY.md", "CONTEXT.md", "LESSONS.md", "HEARTBEAT.md", "SOUL.md", "USER.md"}
 
 MAX_MEMORY_LINES = 200
 MAX_CONTEXT_LINES = 500
@@ -180,6 +184,25 @@ def save_memory(text: str, topic: str | None = None) -> str:
 
         _atomic_write(MEMORY_MD, content)
 
+    # Write-through to pgvector (fire-and-forget, non-critical)
+    try:
+        from memory_rag import MEMORY_RAG_ENABLED
+        if MEMORY_RAG_ENABLED:
+            import asyncio
+            from memory_rag import store_fact
+            category = topic or "general"
+            asyncio.get_event_loop().create_task(
+                store_fact(text, source="manual", category=category)
+            )
+    except Exception:
+        pass  # RAG indexing failure is non-critical
+
+    try:
+        from metrics import inc
+        inc("nexus_memory_ops_total", {"operation": "save"})
+    except Exception:
+        pass
+
     return text
 
 
@@ -199,6 +222,30 @@ def update_memory(old_text: str, new_text: str, topic: str | None = None) -> boo
 
     updated = content.replace(old_text, new_text, 1)
     _atomic_write(path, updated)
+
+    # Write-through to pgvector: archive old, store new
+    try:
+        from memory_rag import MEMORY_RAG_ENABLED
+        if MEMORY_RAG_ENABLED:
+            import asyncio
+            from memory_rag import archive_fact, store_fact
+            category = topic or "general"
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(archive_fact(old_text))
+                loop.create_task(store_fact(new_text, source="manual", category=category))
+            else:
+                asyncio.run(archive_fact(old_text))
+                asyncio.run(store_fact(new_text, source="manual", category=category))
+    except Exception:
+        pass  # RAG update failure is non-critical
+
+    try:
+        from metrics import inc
+        inc("nexus_memory_ops_total", {"operation": "update"})
+    except Exception:
+        pass
+
     return True
 
 
@@ -216,25 +263,52 @@ def remove_memory(text_or_index) -> bool:
         return False
 
     lines = content.splitlines()
+    removed_text = None
 
     if isinstance(text_or_index, int):
         bullets = [(i, line) for i, line in enumerate(lines) if line.startswith("- ")]
         idx = text_or_index - 1  # 1-indexed
         if 0 <= idx < len(bullets):
             line_idx = bullets[idx][0]
+            removed_text = lines[line_idx]
             lines.pop(line_idx)
             _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
-            return True
-        return False
+        else:
+            return False
+    else:
+        # String match -- find first line containing the text
+        text = str(text_or_index)
+        for i, line in enumerate(lines):
+            if text in line:
+                removed_text = line
+                lines.pop(i)
+                _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
+                break
+        else:
+            return False
 
-    # String match — find first line containing the text
-    text = str(text_or_index)
-    for i, line in enumerate(lines):
-        if text in line:
-            lines.pop(i)
-            _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
-            return True
-    return False
+    # Write-through to pgvector: soft archive
+    if removed_text:
+        try:
+            from memory_rag import MEMORY_RAG_ENABLED
+            if MEMORY_RAG_ENABLED:
+                import asyncio
+                from memory_rag import archive_fact
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(archive_fact(removed_text))
+                else:
+                    asyncio.run(archive_fact(removed_text))
+        except Exception:
+            pass  # RAG archival failure is non-critical
+
+    try:
+        from metrics import inc
+        inc("nexus_memory_ops_total", {"operation": "remove"})
+    except Exception:
+        pass
+
+    return True
 
 
 def list_memories() -> list[dict]:
@@ -290,8 +364,8 @@ def search_memories(query: str) -> list[dict]:
     q = query.lower()
     results = []
 
-    # Search system files (CONTEXT, LESSONS, MEMORY)
-    for sys_file in (CONTEXT_MD, LESSONS_MD, MEMORY_MD):
+    # Search system files (SOUL, USER, CONTEXT, LESSONS, MEMORY)
+    for sys_file in (SOUL_MD, USER_MD, CONTEXT_MD, LESSONS_MD, MEMORY_MD):
         content = _read_md(sys_file)
         for line in content.splitlines():
             if q in line.lower():
@@ -307,6 +381,12 @@ def search_memories(query: str) -> list[dict]:
                 if q in line.lower():
                     results.append({"text": line, "source": f.stem})
 
+    try:
+        from metrics import inc
+        inc("nexus_memory_ops_total", {"operation": "search"})
+    except Exception:
+        pass
+
     return results
 
 
@@ -319,6 +399,16 @@ def get_memories_for_injection() -> str:
     Returns empty string if no files exist.
     """
     parts = []
+
+    # 0. Agent identity (persistent soul — always first, highest priority)
+    soul = _read_md(SOUL_MD)
+    if soul.strip():
+        parts.append(f"[{AGENT_NAME} Identity]\n" + soul)
+
+    # 0b. Operator profile
+    user = _read_md(USER_MD)
+    if user.strip():
+        parts.append(f"[Operator Profile]\n" + user)
 
     # 1. Operational context (fleet topology, services, credentials, preferences)
     context = _read_md(CONTEXT_MD)
@@ -376,6 +466,33 @@ def add_memory(text: str, category: str = "general") -> str:
 # ---------------------------------------------------------------------------
 # Shared context (PureClaw instance sync)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Identity files (SOUL.md, USER.md)
+# ---------------------------------------------------------------------------
+
+
+def get_soul() -> str:
+    """Read the agent identity file (SOUL.md)."""
+    return _read_md(SOUL_MD)
+
+
+def save_soul(content: str) -> None:
+    """Write the agent identity file (SOUL.md)."""
+    _ensure_dir()
+    _atomic_write(SOUL_MD, content)
+
+
+def get_user_profile_md() -> str:
+    """Read the operator profile file (USER.md)."""
+    return _read_md(USER_MD)
+
+
+def save_user_profile_md(content: str) -> None:
+    """Write the operator profile file (USER.md)."""
+    _ensure_dir()
+    _atomic_write(USER_MD, content)
+
 
 # ---------------------------------------------------------------------------
 # Daily journal subsystem

@@ -107,9 +107,36 @@ class TCHealthProbe:
                     log.warning("TC Vision marked OFFLINE after %d failures", self._vision_failures)
                     self._vision_online = False
 
+    async def _start_http_server(self):
+        """Start HTTP server for /healthz and /metrics endpoints."""
+        from aiohttp import web
+
+        async def _handle_healthz(request):
+            return web.Response(text='{"status":"ok"}', content_type='application/json')
+
+        async def _handle_metrics(request):
+            from metrics import render
+            return web.Response(text=render(), content_type='text/plain; version=0.0.4')
+
+        app = web.Application()
+        app.router.add_get('/healthz', _handle_healthz)
+        app.router.add_get('/metrics', _handle_metrics)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', 9876)
+        await site.start()
+        log.info("Metrics HTTP server started on :9876 (/healthz, /metrics)")
+
     async def run_loop(self):
         """Main probe loop — runs until cancelled."""
         self._running = True
+
+        # Start metrics HTTP server
+        try:
+            await self._start_http_server()
+        except Exception as e:
+            log.warning("Failed to start metrics HTTP server: %s", e)
+
         log.info("TC health probe started (interval=%ds, threshold=%d)", _PROBE_INTERVAL, _FAILURE_THRESHOLD)
 
         while self._running:

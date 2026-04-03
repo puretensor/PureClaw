@@ -276,6 +276,14 @@ class VLLMBackend:
         if text:
             messages.append(assistant_msg)
             save_conversation_history(session_id, _clean_for_history(messages))
+
+        # Prometheus metrics (local inference, cost = $0)
+        try:
+            from metrics import inc
+            inc("nexus_llm_calls_total", {"backend": "vllm", "model": self._model})
+        except Exception:
+            pass
+
         return {"result": text or "(empty response)", "session_id": session_id}
 
     # ------------------------------------------------------------------

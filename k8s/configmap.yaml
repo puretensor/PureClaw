@@ -75,6 +75,12 @@ data:
   TERMINAL_WS_ENABLED: "true"
   TERMINAL_WS_PORT: "9877"
 
+  # Memory RAG (pgvector hybrid search)
+  MEMORY_RAG_ENABLED: "true"
+  MEMORY_PG_URL: "postgresql://postgres:PT-db-2025-secure@postgres-postgresql.databases.svc.cluster.local:5432/nexus_memory"
+  MEMORY_EMBED_URL: "http://<TS_TENSOR_CORE>:11434"
+  MEMORY_EMBED_MODEL: "nomic-embed-text"
+
   # Misc
   WEATHER_DEFAULT_LOCATION: "Windsor,UK"
   HEALTH_PROBE_INTERVAL: "30"

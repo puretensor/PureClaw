@@ -170,6 +170,16 @@ def _log_usage(usage, model_id: str, label: str = "") -> None:
         prefix, input_tokens, output_tokens, total_cost,
     )
 
+    # Prometheus metrics
+    try:
+        from metrics import inc
+        inc("nexus_llm_calls_total", {"backend": "gemini", "model": model_id})
+        inc("nexus_llm_tokens_total", {"backend": "gemini", "model": model_id, "direction": "input"}, input_tokens)
+        inc("nexus_llm_tokens_total", {"backend": "gemini", "model": model_id, "direction": "output"}, output_tokens)
+        inc("nexus_llm_cost_usd_total", {"backend": "gemini", "model": model_id}, total_cost)
+    except Exception:
+        pass
+
 
 class GeminiAPIBackend:
     """Backend that calls Azure OpenAI with tool loop.

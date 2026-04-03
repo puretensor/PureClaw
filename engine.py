@@ -478,7 +478,7 @@ def call_sync(
     return result
 
 
-def _build_memory_context(chat_id: int | None = None) -> str | None:
+def _build_memory_context(chat_id: int | None = None, query: str | None = None) -> str | None:
     """Assemble memory context for injection (shared by streaming + failover)."""
     parts = []
     if get_memories_for_injection:
@@ -502,6 +502,32 @@ def _build_memory_context(chat_id: int | None = None) -> str | None:
                 parts.append("\n".join(profile_lines))
         except Exception:
             pass
+
+    # RAG-enhanced retrieval from pgvector (when enabled and query provided)
+    if query:
+        try:
+            import asyncio
+            from memory_rag import search_facts, MEMORY_RAG_ENABLED
+            if MEMORY_RAG_ENABLED:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule as a task -- will be awaited by caller
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        rag_results = executor.submit(
+                            asyncio.run, search_facts(query, limit=5)
+                        ).result(timeout=5)
+                else:
+                    rag_results = asyncio.run(search_facts(query, limit=5))
+
+                if rag_results:
+                    from config import AGENT_NAME
+                    rag_lines = [f"[{AGENT_NAME} Relevant Memories (RAG)]"]
+                    for r in rag_results:
+                        rag_lines.append(f"- [{r['category']}] {r['content']}")
+                    parts.append("\n".join(rag_lines))
+        except Exception as exc:
+            log.debug("RAG retrieval failed (non-critical): %s", exc)
 
     memory_ctx = "\n\n".join(parts) if parts else None
 
@@ -548,7 +574,7 @@ async def call_streaming(
     except Exception:
         pass
 
-    memory_ctx = _build_memory_context(chat_id)
+    memory_ctx = _build_memory_context(chat_id, query=message)
 
     backend_name = _resolve_backend_name(backend_name, chat_id)
     if tool_profile != "admin" and backend_name in CLI_BACKENDS:

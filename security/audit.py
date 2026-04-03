@@ -130,6 +130,13 @@ def log_observer_run(
     except Exception as e:
         log.debug("Audit log_observer_run error (non-fatal): %s", e)
 
+    # Prometheus metrics
+    try:
+        from metrics import inc
+        inc("nexus_observer_runs_total", {"observer_name": observer_name, "status": "success" if success else "error"})
+    except Exception:
+        pass
+
 
 def log_policy_violation(
     session_id: Optional[str],

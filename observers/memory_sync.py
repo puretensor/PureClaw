@@ -27,8 +27,11 @@ SHARED_CONTEXT_PATH = Path(os.environ.get(
     "SHARED_CONTEXT_PATH", "/data/sync/pureclaw_memory.md"
 ))
 TC_SSH_HOST = os.environ.get("TC_SSH_ALIAS", "tensor-core")
-TC_MEMORY_PATH = "~/.claude/projects/-home-puretensorai/memory/MEMORY.md"
-TC_DIGEST_PATH = "~/.claude/projects/-home-puretensorai/memory/hal_digest.md"
+TC_MEMORY_BASE = "~/.claude/projects/-home-puretensorai/memory"
+TC_MEMORY_PATH = f"{TC_MEMORY_BASE}/MEMORY.md"
+TC_SOUL_PATH = f"{TC_MEMORY_BASE}/SOUL.md"
+TC_USER_PATH = f"{TC_MEMORY_BASE}/USER.md"
+TC_DIGEST_PATH = f"{TC_MEMORY_BASE}/hal_digest.md"
 
 # SSH options for non-interactive use
 SSH_OPTS = [
@@ -84,6 +87,7 @@ class MemorySyncObserver(Observer):
                 state = {}
 
         pull_ok = self._pull_pureclaw_memory(state)
+        self._pull_identity_files(state)
         push_ok = self._push_hal_digest(state)
 
         # Persist updated state
@@ -131,6 +135,29 @@ class MemorySyncObserver(Observer):
         state["pull_time"] = datetime.now(timezone.utc).isoformat()
         log.info("[memory_sync] Pull: updated PureClaw memory (%d bytes)", len(content))
         return True
+
+    def _pull_identity_files(self, state: dict) -> None:
+        """Pull SOUL.md and USER.md from tensor-core to /data/memory/."""
+        from memory import MEMORY_DIR
+
+        for name, remote_path in [("SOUL.md", TC_SOUL_PATH), ("USER.md", TC_USER_PATH)]:
+            hash_key = f"pull_{name.lower().replace('.', '_')}_hash"
+            try:
+                content = _ssh_cmd(TC_SSH_HOST, f"cat {remote_path} 2>/dev/null || true")
+                content = content.strip()
+                if not content:
+                    continue
+
+                new_hash = _content_hash(content)
+                if new_hash == state.get(hash_key):
+                    continue
+
+                local_path = MEMORY_DIR / name
+                local_path.write_text(content, encoding="utf-8")
+                state[hash_key] = new_hash
+                log.info("[memory_sync] Pulled %s (%d bytes)", name, len(content))
+            except Exception as exc:
+                log.warning("[memory_sync] Failed to pull %s: %s", name, exc)
 
     def _push_hal_digest(self, state: dict) -> bool:
         """Compose agent's activity digest and push to tensor-core."""

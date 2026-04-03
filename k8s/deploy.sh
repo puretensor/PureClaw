@@ -16,7 +16,7 @@ set -euo pipefail
 NEXUS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FOX_N1="${FOX_N1:-root@fox-n1}"
 BUILD_DIR="/tmp/nexus-build"
-VERSION="v2.1.0"
+VERSION="v2.2.0"
 
 echo "=== Nexus K8s Deploy ==="
 echo "Source: $NEXUS_DIR"

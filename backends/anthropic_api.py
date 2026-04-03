@@ -229,6 +229,16 @@ def _log_usage(resp, label: str = "") -> None:
         output_tokens, hit_pct,
     )
 
+    # Prometheus metrics
+    try:
+        from metrics import inc
+        model_id = getattr(resp, "model", "unknown")
+        inc("nexus_llm_calls_total", {"backend": "anthropic", "model": model_id})
+        inc("nexus_llm_tokens_total", {"backend": "anthropic", "model": model_id, "direction": "input"}, total_input)
+        inc("nexus_llm_tokens_total", {"backend": "anthropic", "model": model_id, "direction": "output"}, output_tokens)
+    except Exception:
+        pass
+
 
 class AnthropicAPIBackend:
     """Backend that calls Anthropic Messages API with optional tool loop."""

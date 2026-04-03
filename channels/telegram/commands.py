@@ -567,7 +567,7 @@ async def cmd_nodes_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized
 async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /session — list, switch, or delete sessions."""
+    """Handle /session — list, switch, archive, or delete sessions."""
     chat_id = update.effective_chat.id
     args = context.args or []
 
@@ -584,6 +584,23 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Deleted session: {name}")
         else:
             await update.message.reply_text(f"Session not found: {name}")
+        return
+
+    # /session archive [name] — archive current or named session
+    if args and args[0] == "archive":
+        name = args[1] if len(args) > 1 else None
+        current = get_session(chat_id)
+        if name:
+            archived = archive_session(chat_id, name)
+            if archived:
+                await update.message.reply_text(f"Archived session: {name}")
+            else:
+                await update.message.reply_text(f"Session not found or already archived: {name}")
+        elif current:
+            archive_session(chat_id)
+            await update.message.reply_text(f"Archived session: {current['name']}")
+        else:
+            await update.message.reply_text("No active session to archive.")
         return
 
     # /session <name> — switch to or create
@@ -615,11 +632,21 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_count = s["message_count"] or 0
         summary_part = ""
         if s.get("summary"):
-            summary_part = f' \u2014 "{s["summary"]}"'
+            summary_part = f' \u2014 "{s["summary"][:60]}"'
         elif msg_count == 0:
             summary_part = " (no messages)"
-        lines.append(f"{arrow}{s['name']} ({model_label}, {msg_count} msgs){summary_part}")
+        # Show last used time
+        last_used = ""
+        if s.get("last_used"):
+            try:
+                dt = datetime.fromisoformat(s["last_used"])
+                last_used = f" [{dt.strftime('%b %d %H:%M')}]"
+            except (ValueError, TypeError):
+                pass
+        lines.append(f"{arrow}{s['name']} ({model_label}, {msg_count} msgs){last_used}{summary_part}")
 
+    lines.append("")
+    lines.append("Commands: /session <name>, /session archive, /history, /resume <n>")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -647,15 +674,17 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 date_str = ""
         summary_part = ""
         if s.get("summary"):
-            summary_part = f' \u2014 "{s["summary"]}"'
+            summary_part = f'\n   "{s["summary"][:80]}"'
         lines.append(f"{i}. {s['name']} ({msg_count} msgs{date_str}){summary_part}")
 
+    lines.append("")
+    lines.append("Use /resume <n> to restore a session with memory context.")
     await update.message.reply_text("\n".join(lines))
 
 
 @authorized
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /resume <n> — restore archived session by number."""
+    """Handle /resume <n> — restore archived session with memory-augmented context."""
     chat_id = update.effective_chat.id
     args = context.args or []
 
@@ -676,10 +705,36 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     session = archived[n - 1]
     restored = restore_session(chat_id, session["id"])
-    if restored:
-        await update.message.reply_text(f"Restored session: {restored['name']}")
-    else:
+    if not restored:
         await update.message.reply_text("Failed to restore session.")
+        return
+
+    # Build memory-augmented context for the restored session
+    lines = [f"Restored session: {restored['name']}"]
+    lines.append(f"Model: {get_model_display(restored['model'], backend_name=restored.get('backend'))}")
+    lines.append(f"Messages: {restored.get('message_count', 0)}")
+
+    if restored.get("summary"):
+        lines.append(f"Summary: {restored['summary']}")
+
+    # Query pgvector for relevant memories using session name + summary
+    try:
+        from memory_rag import MEMORY_RAG_ENABLED, search_facts
+        if MEMORY_RAG_ENABLED:
+            query = f"{restored['name']} {restored.get('summary', '')}".strip()
+            if query:
+                results = await search_facts(query, limit=3)
+                if results:
+                    lines.append("\nRelevant memories:")
+                    for r in results:
+                        content = r["content"][:120]
+                        if len(r["content"]) > 120:
+                            content += "..."
+                        lines.append(f"  [{r['category']}] {content}")
+    except Exception:
+        pass  # Non-critical — session restored regardless
+
+    await update.message.reply_text("\n".join(lines))
 
 
 @authorized

@@ -164,6 +164,11 @@ SUMMARY_BACKEND = os.environ.get("SUMMARY_BACKEND", "gemini_api")
 # Security policy
 SECURITY_POLICY_PATH = os.environ.get("SECURITY_POLICY_PATH", "")
 
+# Heartbeat pipeline
+HEARTBEAT_PROACTIVITY = os.environ.get("HEARTBEAT_PROACTIVITY", "advisor")
+HEARTBEAT_BUSINESS_START = int(os.environ.get("HEARTBEAT_BUSINESS_START", "8"))
+HEARTBEAT_BUSINESS_END = int(os.environ.get("HEARTBEAT_BUSINESS_END", "18"))
+
 # Paths
 DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent / "nexus.db")))
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "nexus_system_prompt.md"
