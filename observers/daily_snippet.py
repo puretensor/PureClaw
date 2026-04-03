@@ -213,7 +213,7 @@ class DailySnippetObserver(Observer):
 
         # Clean up SKIP_QUOTE and strip any remaining citation markers
         brief = brief.replace("SKIP_QUOTE", "").strip()
-        brief = re.sub(r"\s*\[HL-[\d,\s]+\]", "", brief)
+        brief = re.sub(r"\s*\[HL-[^\]]+\]", "", brief)
         brief = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", brief)
 
         # Save brief to disk before sending
@@ -400,6 +400,7 @@ STRICT FORMATTING RULES:
 - "ON THIS DAY:" must be the literal prefix (not "Historical Anchor" or any variant)
 - "QUOTE:" must be the literal prefix (not "QOTD" or any variant)
 - Do NOT include any citation markers like [HL-1], [1], [Reuters], or similar brackets in the output
+- Paraphrase all headline content in your own analytical voice. Never copy headline text verbatim into the brief.
 
 SOURCE TRACKING (internal, NOT displayed):
 - Mentally track which headline(s) each story draws from to ensure accuracy
@@ -757,6 +758,20 @@ If no titled people found, return: []"""
                 "council_verdict": council.verdict,
                 "council_responded": council.responded,
                 "council_scores_table": council.scores_table,
+                "council_feedback": council.feedback,
+                "council_members": [
+                    {
+                        "role": m.role,
+                        "model": m.model,
+                        "score": m.score,
+                        "verdict": m.verdict,
+                        "strengths": m.strengths,
+                        "concerns": m.concerns,
+                        "suggestions": m.suggestions,
+                        "error": m.error,
+                    }
+                    for m in council.members
+                ],
                 "brief_length": len(brief),
                 "brief": brief,
             }
@@ -936,7 +951,11 @@ Return ONLY the JSON."""
                 "prompt": (
                     "Score this intelligence brief for FAITHFULNESS TO SOURCE HEADLINES. "
                     "Check: Are stories accurately drawn from the source headlines? "
-                    "Are any details fabricated or embellished beyond what the headlines state? "
+                    "Are any verifiable facts (names, titles, statistics, dates) fabricated or "
+                    "embellished beyond what the headlines state? "
+                    "Note: Each story is expected to contain analytical context and strategic "
+                    "implications -- these go beyond headlines BY DESIGN. Only flag analytical "
+                    "content if it contradicts the headlines or introduces fabricated facts. "
                     "The brief does not include inline citations -- match stories to headlines by content."
                 ),
             },
@@ -957,10 +976,15 @@ Return ONLY the JSON."""
                 "model": "grok",
                 "system": (
                     "You are a completeness analyst. You compare a brief against its source "
-                    "headlines to assess whether the most significant stories have been covered."
+                    "headlines to assess whether the most significant stories have been covered. "
+                    "The brief format is constrained to 6-8 stories per section across 5 sections "
+                    "(30-40 stories total), so it CANNOT cover all input headlines."
                 ),
                 "prompt": (
                     "Score this intelligence brief for COVERAGE COMPLETENESS. "
+                    "The brief is limited to 6-8 stories per section (30-40 total from ~150-200 "
+                    "input headlines). Score based on whether the MOST SIGNIFICANT stories are "
+                    "included, not total coverage percentage. "
                     "Check: Are the most important headlines covered? Are any major stories "
                     "conspicuously absent? Is the regional balance appropriate?"
                 ),
@@ -974,8 +998,10 @@ Return ONLY the JSON."""
                 "prompt": (
                     "Score this intelligence brief for OBJECTIVITY AND RIGOUR. "
                     "Check: Is there hidden bias or editorializing in the 'what happened' lines? "
-                    "Are strategic implications logically supported? "
-                    "Are there any logical gaps or unsupported assertions?"
+                    "Are strategic implications logically supported by the preceding facts? "
+                    "Are there any logical gaps or unsupported assertions? "
+                    "Note: The third sentence of each story IS analytical by design -- evaluate "
+                    "it for logical soundness, not for staying within headline text."
                 ),
             },
             "knowledge_verifier": {
@@ -991,6 +1017,10 @@ Return ONLY the JSON."""
                     "Are dates, timelines, and statistics accurate? "
                     "Are causal claims and geopolitical relationships correctly stated? "
                     "Flag anything that seems fabricated, outdated, or factually dubious. "
+                    "Verify verifiable facts (names, dates, titles, statistics) against the "
+                    "SOURCE HEADLINES provided above -- not your training knowledge. "
+                    "Analytical implications and strategic outlook are expected and should be "
+                    "evaluated for logical coherence, not headline presence. "
                     "Check the UPSTREAM VERIFICATION STATUS at the top. "
                     "If entity/role verification FAILED, note any unverified titles/roles "
                     "as concerns but do not penalise the score solely for upstream failures."
