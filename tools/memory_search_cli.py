@@ -14,10 +14,7 @@ import os
 import sys
 
 # Default connection for tensor-core (via Tailscale to fox-n1 K3s NodePort)
-DEFAULT_PG_URL = os.environ.get(
-    "MEMORY_PG_URL",
-    "postgresql://postgres:PT-db-2025-secure@100.103.248.9:30432/nexus_memory",
-)
+DEFAULT_PG_URL = os.environ.get("MEMORY_PG_URL", "")
 DEFAULT_EMBED_URL = os.environ.get(
     "MEMORY_EMBED_URL",
     "http://localhost:11434",  # Ollama on tensor-core
@@ -99,6 +96,10 @@ async def search(query: str, limit: int = 5, category: str | None = None) -> lis
 
 
 def main():
+    if not DEFAULT_PG_URL:
+        print("Error: MEMORY_PG_URL environment variable not configured")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="Semantic memory search via pgvector")
     parser.add_argument("query", help="Search query")
     parser.add_argument("--limit", type=int, default=5, help="Max results (default 5)")

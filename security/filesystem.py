@@ -12,6 +12,8 @@ import os
 import re
 import shlex
 
+from pathlib import Path
+
 from security.policy import get_policy, matches_glob
 
 log = logging.getLogger("nexus.security")
@@ -30,6 +32,10 @@ def check_path_access(path: str, mode: str) -> tuple[bool, str]:
         real_path = os.path.realpath(path)
     except (OSError, ValueError):
         real_path = path
+
+    # After realpath resolution
+    if ".." in Path(path).parts:
+        return False, f"Path traversal rejected: {path}"
 
     if mode == "read":
         deny_patterns = policy.read_deny
@@ -124,7 +130,7 @@ def _extract_read_targets(command: str) -> list[str]:
 
 
 def check_bash_command(command: str) -> tuple[bool, str]:
-    """Heuristic check on a bash command. Defense-in-depth only.
+    """Heuristic check on a bash command. Advisory defense-in-depth, not a security boundary.
 
     Returns (allowed: bool, reason: str).
     """

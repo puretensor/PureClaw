@@ -194,9 +194,6 @@ class HalMailRunner:
             )
             return
 
-        if not DRY_RUN:
-            mark_email_content_seen(chash, em["id"], account_name)
-
         # --- Gate 5: Classify (role-aware) ---
         classification = classify_email(
             em["from"],
@@ -210,6 +207,8 @@ class HalMailRunner:
                 log.info(
                     "[DRY_RUN] IGNORE: %s re: %s", sender_addr, em["subject"]
                 )
+            else:
+                mark_email_content_seen(chash, em["id"], account_name)
             return
 
         # --- Gate 6: Age filter ---
@@ -218,6 +217,8 @@ class HalMailRunner:
             log.info(
                 "Skipping aged email from %s (%s old)", sender_addr, email_age
             )
+            if not DRY_RUN:
+                mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="AGED")
             return
 
@@ -234,6 +235,7 @@ class HalMailRunner:
                     backend_name,
                 )
             else:
+                mark_email_content_seen(chash, em["id"], account_name)
                 await self._send_notification(em)
             return
 
@@ -245,6 +247,7 @@ class HalMailRunner:
                     em["subject"],
                 )
             else:
+                mark_email_content_seen(chash, em["id"], account_name)
                 await self._send_notification(em, tag="FOLLOW-UP")
             return
 
@@ -257,6 +260,7 @@ class HalMailRunner:
                     em["subject"],
                 )
             else:
+                mark_email_content_seen(chash, em["id"], account_name)
                 await self._send_notification(em)
             return
 
@@ -266,6 +270,8 @@ class HalMailRunner:
                 "Already replied to this content from %s, skipping",
                 sender_addr,
             )
+            if not DRY_RUN:
+                mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="DEDUP")
             return
 
@@ -277,6 +283,8 @@ class HalMailRunner:
                 reply_count,
                 sender_addr,
             )
+            if not DRY_RUN:
+                mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="RATE-LIMITED")
             return
 
@@ -290,7 +298,8 @@ class HalMailRunner:
             )
             return
 
-        # All gates passed -- create auto reply with profile routing
+        # All gates passed -- mark seen then create auto reply with profile routing
+        mark_email_content_seen(chash, em["id"], account_name)
         await self._create_auto_reply(em, chash, profile)
 
     # ------------------------------------------------------------------

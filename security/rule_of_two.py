@@ -28,13 +28,17 @@ log = logging.getLogger("nexus.security")
 # For other tools: True means ALL calls require approval.
 HIGH_RISK_TOOLS: dict[str, list[str] | bool] = {
     "bash": [
-        r"kubectl\s+(apply|delete|drain|cordon)",
+        r"kubectl\s+(apply|delete|drain|cordon|scale|patch|rollout\s+undo)",
         r"systemctl\s+(stop|disable|mask)",
         r"helm\s+(install|upgrade|uninstall|delete)",
-        r"docker\s+(rm|rmi|system\s+prune)",
+        r"docker\s+(rm|rmi|kill|stop|system\s+prune)",
+        r"rm\s+-rf\s+/(?!tmp)",
+        r"(?i)DROP\s+(TABLE|DATABASE)",
     ],
     "send_email": True,
     "claw_dispatch": True,
+    "write_file": [r"^/etc/", r"^/usr/", r"^/bin/", r"^/sbin/"],
+    "edit_file": [r"^/etc/", r"^/usr/", r"^/bin/", r"^/sbin/"],
 }
 
 # Approval timeout (seconds)
@@ -56,6 +60,15 @@ def _get_patterns(tool_name: str) -> list[re.Pattern]:
     return _compiled[tool_name]
 
 
+def _get_check_value(tool_name: str, args: dict) -> str:
+    """Get the string to match against patterns for a given tool."""
+    if tool_name == "bash":
+        return args.get("command", "")
+    if tool_name in ("write_file", "edit_file"):
+        return args.get("file_path", "")
+    return ""
+
+
 def requires_approval(tool_name: str, args: dict) -> bool:
     """Check if a tool call requires operator approval."""
     spec = HIGH_RISK_TOOLS.get(tool_name)
@@ -66,10 +79,10 @@ def requires_approval(tool_name: str, args: dict) -> bool:
     if spec is True:
         return True
 
-    # Pattern-based check (bash commands)
-    command = args.get("command", "")
+    # Pattern-based check
+    value = _get_check_value(tool_name, args)
     for pattern in _get_patterns(tool_name):
-        if pattern.search(command):
+        if pattern.search(value):
             return True
 
     return False
@@ -90,6 +103,9 @@ def _describe_action(tool_name: str, args: dict) -> str:
         target = args.get("target", "?")
         task = args.get("task", "?")[:100]
         return f"claw_dispatch to {target}: {task}"
+    elif tool_name in ("write_file", "edit_file"):
+        path = args.get("file_path", "?")
+        return f"{tool_name}: {path}"
     else:
         return f"{tool_name}: {json.dumps(args, default=str)[:200]}"
 

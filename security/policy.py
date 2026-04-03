@@ -180,10 +180,10 @@ def load_policy(path: str | Path | None = None) -> SecurityPolicy:
     Raises ValueError on schema validation failure.
     """
     global _current_policy, _policy_path
+    import os
 
     if path is None:
         # Check env var, then default
-        import os
         env_path = os.environ.get("SECURITY_POLICY_PATH")
         if env_path:
             path = Path(env_path)
@@ -194,7 +194,10 @@ def load_policy(path: str | Path | None = None) -> SecurityPolicy:
     _policy_path = path
 
     if not path.exists():
-        log.info("No security policy at %s — using permissive defaults", path)
+        env = os.environ.get("NEXUS_ENV", "development")
+        if env in ("production", "prod"):
+            raise RuntimeError(f"Security policy required in production but not found at {path}")
+        log.warning("No security policy at %s -- using permissive defaults (env=%s)", path, env)
         _current_policy = SecurityPolicy()
         return _current_policy
 

@@ -525,6 +525,7 @@ class BedrockAPIBackend:
         system_prompt: str | None,
         memory_context: str | None,
         extra_system_prompt: str | None = None,
+        max_tokens_override: int | None = None,
     ) -> dict:
         """Build kwargs for bedrock-runtime converse() call."""
         # Convert history from Anthropic format to Bedrock format
@@ -534,7 +535,7 @@ class BedrockAPIBackend:
             "modelId": model_id,
             "messages": bedrock_messages,
             "inferenceConfig": {
-                "maxTokens": self._max_tokens,
+                "maxTokens": max_tokens_override or self._max_tokens,
             },
         }
 
@@ -573,7 +574,10 @@ class BedrockAPIBackend:
         return kwargs
 
     def _converse(self, model_id: str, messages: list[dict], **system_kw) -> dict:
-        """Synchronous converse call."""
+        """Synchronous converse call.
+
+        Accepts max_tokens_override via system_kw pass-through.
+        """
         kwargs = self._build_converse_kwargs(model_id, messages, **system_kw)
         return self._client.converse(**kwargs)
 
@@ -625,18 +629,15 @@ class BedrockAPIBackend:
         session_id = session_id or str(uuid.uuid4())
         model_id = self._resolve_model(model)
 
-        # Cap maxTokens for non-streaming converse() — Bedrock limit is 21333
-        original_max = self._max_tokens
-        self._max_tokens = min(self._max_tokens, 21333)
-        try:
-            return self._call_sync_inner(
-                prompt, model_id=model_id, session_id=session_id,
-                timeout=timeout, system_prompt=system_prompt,
-                memory_context=memory_context,
-                tool_context=tool_context,
-            )
-        finally:
-            self._max_tokens = original_max
+        # Use local cap instead of mutating shared instance state
+        max_tokens = min(self._max_tokens, 21333)
+        return self._call_sync_inner(
+            prompt, model_id=model_id, session_id=session_id,
+            timeout=timeout, system_prompt=system_prompt,
+            memory_context=memory_context,
+            tool_context=tool_context,
+            max_tokens_override=max_tokens,
+        )
 
     def _call_sync_inner(
         self,
@@ -648,6 +649,7 @@ class BedrockAPIBackend:
         system_prompt: str | None,
         memory_context: str | None,
         tool_context=None,
+        max_tokens_override: int | None = None,
     ) -> dict:
         from context_compression import compress_tool_results, compress_history
         history = _sanitize_history(get_conversation_history(session_id))
@@ -658,6 +660,7 @@ class BedrockAPIBackend:
         system_kw = dict(
             system_prompt=system_prompt,
             memory_context=memory_context,
+            max_tokens_override=max_tokens_override,
         )
 
         def send_request(msgs):

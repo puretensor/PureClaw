@@ -78,7 +78,12 @@ def log_tool_execution(
             duration_ms=duration_ms,
         )
     except Exception as e:
-        log.debug("Audit log_tool_execution error (non-fatal): %s", e)
+        log.warning("Audit log_tool_execution error (non-fatal): %s", e)
+        try:
+            from metrics import inc
+            inc("nexus_audit_failures_total", {"function": "log_tool_execution"})
+        except Exception:
+            pass
 
 
 def log_llm_call(
@@ -105,7 +110,12 @@ def log_llm_call(
             duration_ms=duration_ms,
         )
     except Exception as e:
-        log.debug("Audit log_llm_call error (non-fatal): %s", e)
+        log.warning("Audit log_llm_call error (non-fatal): %s", e)
+        try:
+            from metrics import inc
+            inc("nexus_audit_failures_total", {"function": "log_llm_call"})
+        except Exception:
+            pass
 
 
 def log_observer_run(
@@ -128,7 +138,12 @@ def log_observer_run(
             metadata_json=_safe_json({"error": error}) if error else None,
         )
     except Exception as e:
-        log.debug("Audit log_observer_run error (non-fatal): %s", e)
+        log.warning("Audit log_observer_run error (non-fatal): %s", e)
+        try:
+            from metrics import inc
+            inc("nexus_audit_failures_total", {"function": "log_observer_run"})
+        except Exception:
+            pass
 
     # Prometheus metrics
     try:
@@ -163,7 +178,12 @@ def log_policy_violation(
             metadata_json=_safe_json({"reason": reason}),
         )
     except Exception as e:
-        log.debug("Audit log_policy_violation error (non-fatal): %s", e)
+        log.warning("Audit log_policy_violation error (non-fatal): %s", e)
+        try:
+            from metrics import inc
+            inc("nexus_audit_failures_total", {"function": "log_policy_violation"})
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +214,12 @@ def _write_audit_record(**kwargs) -> None:
         con.commit()
         con.close()
     except Exception as e:
-        log.debug("Audit DB write error (non-fatal): %s", e)
+        log.warning("Audit DB write error (non-fatal): %s", e)
+        try:
+            from metrics import inc
+            inc("nexus_audit_failures_total", {"function": "_write_audit_record"})
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -220,5 +245,10 @@ def cleanup_old_records() -> int:
             log.info("Audit cleanup: deleted %d records older than %d days", deleted, policy.audit.retention_days)
         return deleted
     except Exception as e:
-        log.debug("Audit cleanup error (non-fatal): %s", e)
+        log.warning("Audit cleanup error (non-fatal): %s", e)
+        try:
+            from metrics import inc
+            inc("nexus_audit_failures_total", {"function": "cleanup_old_records"})
+        except Exception:
+            pass
         return 0

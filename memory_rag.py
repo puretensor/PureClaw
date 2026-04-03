@@ -24,10 +24,7 @@ log = logging.getLogger("nexus")
 # ---------------------------------------------------------------------------
 
 MEMORY_RAG_ENABLED = os.environ.get("MEMORY_RAG_ENABLED", "false").lower() in ("true", "1", "yes")
-MEMORY_PG_URL = os.environ.get(
-    "MEMORY_PG_URL",
-    "postgresql://vantage:vantage@postgres-postgresql.databases.svc:5432/nexus_memory",
-)
+MEMORY_PG_URL = os.environ.get("MEMORY_PG_URL", "")
 MEMORY_EMBED_URL = os.environ.get("MEMORY_EMBED_URL", os.environ.get("VLLM_URL", "http://localhost:8200"))
 MEMORY_EMBED_MODEL = os.environ.get("MEMORY_EMBED_MODEL", "nomic-embed-text")
 EMBED_DIM = 768
@@ -42,6 +39,8 @@ _pool = None
 
 async def get_pool():
     """Get or create the asyncpg connection pool."""
+    if not MEMORY_PG_URL:
+        raise RuntimeError("MEMORY_PG_URL environment variable not configured")
     global _pool
     if _pool is None:
         import asyncpg
@@ -312,7 +311,7 @@ async def is_available() -> bool:
         pool = await get_pool()
         await asyncio.wait_for(pool.fetchval("SELECT 1"), timeout=2.0)
         return True
-    except Exception:
+    except (RuntimeError, Exception):
         return False
 
 

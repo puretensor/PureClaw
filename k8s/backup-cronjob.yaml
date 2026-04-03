@@ -29,8 +29,17 @@ spec:
             - -c
             - |
               echo "=== Nexus backup to Ceph ==="
+              # Safely backup SQLite databases using backup API
+              echo "Creating consistent SQLite snapshots..."
+              for db in /local-data/*.db; do
+                if [ -f "$db" ]; then
+                  sqlite3 "$db" ".backup ${db}.bak" 2>/dev/null || echo "Warning: backup of $(basename $db) failed"
+                fi
+              done
               echo "Syncing nexus-data..."
               cp -a /local-data/. /ceph-data/ 2>&1
+              # Clean up temporary backup files
+              rm -f /local-data/*.db.bak
               echo "Syncing claude-home..."
               cp -a /local-claude/. /ceph-claude/ 2>&1
               echo "Syncing nexus-output..."

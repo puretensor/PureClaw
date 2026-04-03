@@ -313,6 +313,16 @@ def init_db():
         )""")
         log.info("Created user_profiles table")
 
+    # Performance indexes for hot query paths
+    con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_chat ON sessions(chat_id)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(archived_at)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_email_seen_msgid ON email_seen(message_id)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_email_seen_hash ON email_seen(content_hash)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_email_replies_hash ON email_replies_sent(content_hash)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_email_replies_sender ON email_replies_sent(sender_addr)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_drafts_chat ON drafts(chat_id)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_followups_chat ON followups(chat_id, resolved_at)")
+
     con.commit()
     con.close()
 

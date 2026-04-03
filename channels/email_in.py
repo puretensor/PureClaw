@@ -400,9 +400,6 @@ class EmailInputChannel(Channel):
                      sender_addr, account_name)
             return
 
-        # Mark as seen with both message_id and content_hash
-        mark_email_content_seen(chash, em["id"], account_name)
-
         # --- Gate 5: Classify (role-aware) — ignore returns early with no notification ---
         classification = classify_email(
             em["from"], em["subject"], em.get("to", ""),
@@ -410,6 +407,7 @@ class EmailInputChannel(Channel):
         )
 
         if classification == "ignore":
+            mark_email_content_seen(chash, em["id"], account_name)
             return
 
         # --- Gate 6: Age filter (skip emails older than MAX_EMAIL_AGE_HOURS) ---
@@ -418,26 +416,31 @@ class EmailInputChannel(Channel):
         email_age = _parse_email_age(em.get("date_raw", ""))
         if email_age and email_age > timedelta(hours=MAX_EMAIL_AGE_HOURS):
             log.info("Skipping aged email from %s (%s old)", sender_addr, email_age)
+            mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="AGED")
             return
 
         if classification == "notify":
+            mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em)
             return
 
         if classification == "followup":
+            mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="FOLLOW-UP")
             return
 
         # --- classification == "auto_reply" from here ---
         # (classifier already gated on role=primary, but double-check)
         if role != "primary":
+            mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em)
             return
 
         # --- Gate 7: Reply-sent guard (content-hash in email_replies_sent) ---
         if has_reply_been_sent(chash):
             log.info("Already replied to this content from %s, skipping", sender_addr)
+            mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="DEDUP")
             return
 
@@ -446,10 +449,12 @@ class EmailInputChannel(Channel):
         if reply_count >= MAX_REPLIES_PER_SENDER_PER_HOUR:
             log.warning("Rate limit: %d replies to %s in last hour, skipping",
                         reply_count, sender_addr)
+            mark_email_content_seen(chash, em["id"], account_name)
             await self._send_notification(em, tag="RATE-LIMITED")
             return
 
-        # All gates passed — create auto reply
+        # All gates passed — mark seen then create auto reply
+        mark_email_content_seen(chash, em["id"], account_name)
         await self._create_auto_reply(em, chash)
 
     async def _send_notification(self, em: dict, tag: str = "EMAIL",

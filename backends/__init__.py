@@ -1,6 +1,7 @@
 """Backend factory — lazy instances keyed by backend name."""
 
 import logging
+import threading
 
 log = logging.getLogger("nexus")
 
@@ -18,16 +19,12 @@ _REGISTRY = {
 
 CLI_BACKENDS = frozenset({"claude_code", "codex_cli", "gemini_cli"})
 
+_backend_lock = threading.Lock()
 _backend_instances: dict[str, object] = {}
 
 
 def get_backend(name: str | None = None):
-    """Return a lazily initialized backend instance.
-
-    If no name is provided, the current config.ENGINE_BACKEND is used.
-    Each backend is cached independently so per-session routing does not
-    mutate process-global state.
-    """
+    """Return a lazily initialized backend instance."""
     if name is None:
         from config import ENGINE_BACKEND
         name = ENGINE_BACKEND
@@ -35,27 +32,31 @@ def get_backend(name: str | None = None):
     if name in _backend_instances:
         return _backend_instances[name]
 
-    if name not in _REGISTRY:
-        raise ValueError(
-            f"Unknown ENGINE_BACKEND: {name!r}. "
-            f"Valid options: {', '.join(sorted(_REGISTRY))}"
-        )
+    with _backend_lock:
+        # Double-check after acquiring lock
+        if name in _backend_instances:
+            return _backend_instances[name]
 
-    module_path, class_name = _REGISTRY[name]
+        if name not in _REGISTRY:
+            raise ValueError(
+                f"Unknown ENGINE_BACKEND: {name!r}. "
+                f"Valid options: {', '.join(sorted(_REGISTRY))}"
+            )
 
-    import importlib
-    module = importlib.import_module(module_path)
-    cls = getattr(module, class_name)
-    instance = cls()
-
-    _backend_instances[name] = instance
-    log.info("Initialized backend: %s", instance.name)
-    return instance
+        module_path, class_name = _REGISTRY[name]
+        import importlib
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        instance = cls()
+        _backend_instances[name] = instance
+        log.info("Initialized backend: %s", instance.name)
+        return instance
 
 
 def reset_backend(name: str | None = None):
     """Reset one cached backend, or all cached backends when name is None."""
-    if name is None:
-        _backend_instances.clear()
-        return
-    _backend_instances.pop(name, None)
+    with _backend_lock:
+        if name is None:
+            _backend_instances.clear()
+        else:
+            _backend_instances.pop(name, None)

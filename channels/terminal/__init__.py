@@ -433,24 +433,29 @@ class TerminalChannel(Channel):
 
         async def auth_handler(ws):
             """Authenticate then delegate to _ws_handler."""
-            if TERMINAL_API_KEY:
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                    auth = json.loads(raw)
-                    if auth.get("type") != "auth" or auth.get("token") != TERMINAL_API_KEY:
-                        await _send_json(ws, {"type": "error", "message": "Unauthorized"})
-                        await ws.close(4001, "Unauthorized")
-                        return
-                    session = get_session(TERMINAL_CHAT_ID)
-                    await _send_json(ws, {
-                        "type": "auth_ok",
-                        "backend": session.get("backend") if session else None,
-                        "model": session["model"] if session else "sonnet",
-                        "version": "1.0.0",
-                    })
-                except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
-                    await ws.close(4001, "Auth timeout")
+            if not TERMINAL_API_KEY:
+                log.warning("Terminal WS connection rejected: TERMINAL_API_KEY not set")
+                await _send_json(ws, {"type": "error", "message": "Server auth not configured"})
+                await ws.close(4003, "Auth not configured")
+                return
+
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                auth = json.loads(raw)
+                if auth.get("type") != "auth" or auth.get("token") != TERMINAL_API_KEY:
+                    await _send_json(ws, {"type": "error", "message": "Unauthorized"})
+                    await ws.close(4001, "Unauthorized")
                     return
+                session = get_session(TERMINAL_CHAT_ID)
+                await _send_json(ws, {
+                    "type": "auth_ok",
+                    "backend": session.get("backend") if session else None,
+                    "model": session["model"] if session else "sonnet",
+                    "version": "1.0.0",
+                })
+            except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+                await ws.close(4001, "Auth timeout")
+                return
 
             await _ws_handler(ws)
 

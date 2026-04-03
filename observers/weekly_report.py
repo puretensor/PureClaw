@@ -91,7 +91,7 @@ class WeeklyReportObserver(Observer):
     """Compiles weekly CC reports into a comprehensive digest PDF."""
 
     name = "weekly_report"
-    schedule = "0 2 * * 0"  # Sunday 02:00 UTC
+    schedule = "0 2 * * 6"  # Sunday 02:00 UTC (Python weekday: 6=Sunday)
 
     MAX_RETRIES = 3
     RETRY_DELAY = 15

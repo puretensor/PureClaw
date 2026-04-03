@@ -71,11 +71,20 @@ def observe(name: str, labels: dict | None = None, value: float = 0,
         hist_bucket[key] = (total, count, bounds)
 
 
+def _escape_label_value(v) -> str:
+    """Escape label value per Prometheus exposition format."""
+    s = str(v)
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    s = s.replace("\n", "\\n")
+    return s
+
+
 def _format_labels(key: tuple) -> str:
     """Format labels tuple as Prometheus label string."""
     if not key:
         return ""
-    parts = ",".join(f'{k}="{v}"' for k, v in key)
+    parts = ",".join(f'{k}="{_escape_label_value(v)}"' for k, v in key)
     return "{" + parts + "}"
 
 

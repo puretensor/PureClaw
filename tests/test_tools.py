@@ -35,8 +35,8 @@ with patch.dict("os.environ", {
 
 class TestToolSchemas:
 
-    def test_twenty_tools_defined(self):
-        assert len(TOOL_SCHEMAS) == 20
+    def test_twenty_one_tools_defined(self):
+        assert len(TOOL_SCHEMAS) == 21
 
     def test_all_have_function_format(self):
         for schema in TOOL_SCHEMAS:
@@ -54,6 +54,7 @@ class TestToolSchemas:
             "claw_dispatch", "enter_plan_mode", "exit_plan_mode", "spawn_subagent",
             "create_task", "update_task", "list_tasks",
             "save_memory", "read_memory", "list_memory",
+            "search_memory_rag",
         }
 
     def test_required_params(self):
@@ -79,6 +80,7 @@ class TestToolSchemas:
             "save_memory": ["text"],
             "read_memory": [],
             "list_memory": [],
+            "search_memory_rag": ["query"],
         }
         for schema in TOOL_SCHEMAS:
             name = schema["function"]["name"]

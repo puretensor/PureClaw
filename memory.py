@@ -25,10 +25,12 @@ Public API:
   add_memory(text, category)         — compat shim → save_memory()
 """
 
+import fcntl
 import json
 import logging
 import os
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 from config import log, AGENT_NAME
@@ -75,6 +77,20 @@ def _atomic_write(path: Path, content: str):
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
+
+
+@contextmanager
+def _file_lock(path: Path):
+    """Advisory file lock for read-modify-write atomicity."""
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def _read_md(path: Path) -> str:
@@ -157,32 +173,34 @@ def save_memory(text: str, topic: str | None = None) -> str:
 
     if topic:
         filename = _sanitize_topic(topic)
-        path = MEMORY_DIR / filename
-        existing = _read_md(path)
+        target_path = MEMORY_DIR / filename
+        with _file_lock(target_path):
+            existing = _read_md(target_path)
 
-        # Check size limit
-        if len(existing.encode("utf-8")) >= MAX_TOPIC_FILE_SIZE:
-            log.warning("Topic file %s exceeds %d bytes, not appending", filename, MAX_TOPIC_FILE_SIZE)
-            return text
+            # Check size limit
+            if len(existing.encode("utf-8")) >= MAX_TOPIC_FILE_SIZE:
+                log.warning("Topic file %s exceeds %d bytes, not appending", filename, MAX_TOPIC_FILE_SIZE)
+                return text
 
-        if not existing:
-            content = f"# {topic.title()}\n\n- {text}\n"
-        else:
-            content = existing.rstrip("\n") + f"\n- {text}\n"
+            if not existing:
+                content = f"# {topic.title()}\n\n- {text}\n"
+            else:
+                content = existing.rstrip("\n") + f"\n- {text}\n"
 
-        _atomic_write(path, content)
+            _atomic_write(target_path, content)
     else:
-        existing = _read_md(MEMORY_MD)
-        if not existing:
-            content = f"# {AGENT_NAME} Memory\n\n- {text}\n"
-        else:
-            content = existing.rstrip("\n") + f"\n- {text}\n"
+        with _file_lock(MEMORY_MD):
+            existing = _read_md(MEMORY_MD)
+            if not existing:
+                content = f"# {AGENT_NAME} Memory\n\n- {text}\n"
+            else:
+                content = existing.rstrip("\n") + f"\n- {text}\n"
 
-        line_count = len(content.splitlines())
-        if line_count > MAX_MEMORY_LINES:
-            log.warning("MEMORY.md has %d lines (limit %d)", line_count, MAX_MEMORY_LINES)
+            line_count = len(content.splitlines())
+            if line_count > MAX_MEMORY_LINES:
+                log.warning("MEMORY.md has %d lines (limit %d)", line_count, MAX_MEMORY_LINES)
 
-        _atomic_write(MEMORY_MD, content)
+            _atomic_write(MEMORY_MD, content)
 
     # Write-through to pgvector (fire-and-forget, non-critical)
     try:
@@ -216,12 +234,13 @@ def update_memory(old_text: str, new_text: str, topic: str | None = None) -> boo
     else:
         path = MEMORY_MD
 
-    content = _read_md(path)
-    if not content or old_text not in content:
-        return False
+    with _file_lock(path):
+        content = _read_md(path)
+        if not content or old_text not in content:
+            return False
 
-    updated = content.replace(old_text, new_text, 1)
-    _atomic_write(path, updated)
+        updated = content.replace(old_text, new_text, 1)
+        _atomic_write(path, updated)
 
     # Write-through to pgvector: archive old, store new
     try:
@@ -258,34 +277,35 @@ def remove_memory(text_or_index) -> bool:
 
     Returns True if a line was removed.
     """
-    content = _read_md(MEMORY_MD)
-    if not content:
-        return False
-
-    lines = content.splitlines()
-    removed_text = None
-
-    if isinstance(text_or_index, int):
-        bullets = [(i, line) for i, line in enumerate(lines) if line.startswith("- ")]
-        idx = text_or_index - 1  # 1-indexed
-        if 0 <= idx < len(bullets):
-            line_idx = bullets[idx][0]
-            removed_text = lines[line_idx]
-            lines.pop(line_idx)
-            _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
-        else:
+    with _file_lock(MEMORY_MD):
+        content = _read_md(MEMORY_MD)
+        if not content:
             return False
-    else:
-        # String match -- find first line containing the text
-        text = str(text_or_index)
-        for i, line in enumerate(lines):
-            if text in line:
-                removed_text = line
-                lines.pop(i)
+
+        lines = content.splitlines()
+        removed_text = None
+
+        if isinstance(text_or_index, int):
+            bullets = [(i, line) for i, line in enumerate(lines) if line.startswith("- ")]
+            idx = text_or_index - 1  # 1-indexed
+            if 0 <= idx < len(bullets):
+                line_idx = bullets[idx][0]
+                removed_text = lines[line_idx]
+                lines.pop(line_idx)
                 _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
-                break
+            else:
+                return False
         else:
-            return False
+            # String match -- find first line containing the text
+            text = str(text_or_index)
+            for i, line in enumerate(lines):
+                if text in line:
+                    removed_text = line
+                    lines.pop(i)
+                    _atomic_write(MEMORY_MD, "\n".join(lines) + "\n")
+                    break
+            else:
+                return False
 
     # Write-through to pgvector: soft archive
     if removed_text:
