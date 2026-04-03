@@ -8,7 +8,7 @@ spec:
   selector:
     app: nexus
   ports:
-    - name: webhook
+    - name: metrics
       port: 9876
       targetPort: 9876
       nodePort: 30876
@@ -17,4 +17,9 @@ spec:
       port: 9877
       targetPort: 9877
       nodePort: 30879
+      protocol: TCP
+    - name: webhook
+      port: 9878
+      targetPort: 9878
+      nodePort: 30882
       protocol: TCP

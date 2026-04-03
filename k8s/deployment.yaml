@@ -156,9 +156,11 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 9876
-              name: webhook
+              name: metrics
             - containerPort: 9877
               name: terminal-ws
+            - containerPort: 9878
+              name: webhook
           envFrom:
             - secretRef:
                 name: nexus-env

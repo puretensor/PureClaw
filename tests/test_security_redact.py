@@ -51,7 +51,7 @@ class TestRedactText:
         assert "[REDACTED]" in result
 
     def test_xai_key(self):
-        text = "REDACTED_KEY"
+        text = "xai-aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890aBcDeFgHiJk"
         result = redact_text(text)
         assert "xai-" not in result
         assert "[REDACTED]" in result
@@ -103,7 +103,7 @@ class TestRedactArgs:
         assert "sk-" in args["url"]
 
     def test_nested_dict(self):
-        args = {"config": {"token": "REDACTED_KEY"}}
+        args = {"config": {"token": "xai-aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890aBcDeFgHiJk"}}
         result = redact_args(args)
         assert "xai-" not in result["config"]["token"]
 

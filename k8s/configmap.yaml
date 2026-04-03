@@ -80,6 +80,9 @@ data:
   MEMORY_EMBED_URL: "http://<TS_TENSOR_CORE>:11434"
   MEMORY_EMBED_MODEL: "nomic-embed-text"
 
+  # Git push webhook (separate from health/metrics on 9876)
+  GIT_PUSH_PORT: "9878"
+
   # Misc
   WEATHER_DEFAULT_LOCATION: "Windsor,UK"
   HEALTH_PROBE_INTERVAL: "30"

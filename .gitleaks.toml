@@ -1,0 +1,5 @@
+[allowlist]
+  description = "nexus false positive suppressions"
+  paths = [
+    '''tests/test_security_redact\.py''',
+  ]
